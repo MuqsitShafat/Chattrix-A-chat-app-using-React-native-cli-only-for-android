@@ -11,6 +11,9 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		8D8799695A3048B9A70A76B1 /* BootSplash.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 30792BEFBD5F4C75980C3697 /* BootSplash.storyboard */; };
+		179DA225037A4CA5BD7CD51F /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9D509F2BE6DD4CC588DFCC0C /* Colors.xcassets */; };
+		5D51EB0074F34DF5B15C29BC /* IrishGrover-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FC2D046C3B71493D9CB7A785 /* IrishGrover-Regular.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +38,9 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = chat/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = chat/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		30792BEFBD5F4C75980C3697 /* BootSplash.storyboard */ = {isa = PBXFileReference; name = "BootSplash.storyboard"; path = "chat/BootSplash.storyboard"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		9D509F2BE6DD4CC588DFCC0C /* Colors.xcassets */ = {isa = PBXFileReference; name = "Colors.xcassets"; path = "chat/Colors.xcassets"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = folder.assetcatalog; explicitFileType = undefined; includeInIndex = 0; };
+		FC2D046C3B71493D9CB7A785 /* IrishGrover-Regular.ttf */ = {isa = PBXFileReference; name = "IrishGrover-Regular.ttf"; path = "../assets/fonts/IrishGrover-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +71,8 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
+				30792BEFBD5F4C75980C3697 /* BootSplash.storyboard */,
+				9D509F2BE6DD4CC588DFCC0C /* Colors.xcassets */,
 			);
 			name = chat;
 			sourceTree = "<group>";
@@ -93,6 +101,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				30CFC4903000480B9214802B /* Resources */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -115,6 +124,15 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		30CFC4903000480B9214802B /* Resources */ = {
+			isa = "PBXGroup";
+			children = (
+				FC2D046C3B71493D9CB7A785 /* IrishGrover-Regular.ttf */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+			path = "";
 		};
 /* End PBXGroup section */
 
@@ -185,6 +203,9 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				8D8799695A3048B9A70A76B1 /* BootSplash.storyboard in Resources */,
+				179DA225037A4CA5BD7CD51F /* Colors.xcassets in Resources */,
+				5D51EB0074F34DF5B15C29BC /* IrishGrover-Regular.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
