@@ -1,5 +1,4 @@
-package com.chat
-
+package com.chattrix
 import android.os.Bundle
 import com.zoontek.rnbootsplash.RNBootSplash
 import com.facebook.react.ReactActivity

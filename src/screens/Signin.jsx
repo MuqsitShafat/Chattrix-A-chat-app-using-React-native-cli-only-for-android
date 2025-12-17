@@ -1,47 +1,139 @@
 import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
-import React from 'react';
+import React, {useEffect} from 'react';
 
-const Signin = () => {
+// ✅ Google Sign-In & Firebase Auth
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
+import {
+  FacebookAuthProvider,
+  GoogleAuthProvider,
+  getAuth,
+  signInWithCredential,
+} from '@react-native-firebase/auth';
+import {LoginManager, AccessToken} from 'react-native-fbsdk-next';
+//? Google Sign-In function
+async function onGoogleButtonPress() {
+  try {
+    // Check if device supports Google Play Services
+    await GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: true});
+
+    // Sign in and get ID token
+    const signInResult = await GoogleSignin.signIn();
+    let idToken = signInResult.data?.idToken || signInResult.idToken;
+
+    if (!idToken) throw new Error('No ID token found');
+
+    // Create Firebase credential and sign in
+    const googleCredential = GoogleAuthProvider.credential(idToken);
+    return signInWithCredential(getAuth(), googleCredential);
+  } catch (error) {
+    console.error('Google Sign-In Error:', error);
+  }
+}
+//? Facebook Sign-In function
+// ✅ Facebook Sign-In function (with detailed console logs)
+async function onFacebookButtonPress() {
+  try {
+    console.log('🟢 Starting Facebook login...');
+
+    // 1️⃣ Trigger Facebook Login
+    const result = await LoginManager.logInWithPermissions(['public_profile', 'email']);
+    console.log('📢 Facebook login result:', result);
+
+    if (result.isCancelled) {
+      console.warn('⚠️ Login cancelled by user');
+      return;
+    }
+
+    // 2️⃣ Get the Access Token
+    const data = await AccessToken.getCurrentAccessToken();
+    console.log('📢 Facebook AccessToken data:', data);
+
+    if (!data) throw new Error('No access token found');
+
+    // 3️⃣ Create Firebase credential
+    const credential = FacebookAuthProvider.credential(data.accessToken);
+    console.log('📢 Facebook credential created, signing in with Firebase...');
+
+    // 4️⃣ Sign in with Firebase using modular API
+    const auth = getAuth();
+    const userCredential = await signInWithCredential(auth, credential);
+
+    console.log('✅ Facebook sign-in successful:', {
+      uid: userCredential.user.uid,
+      email: userCredential.user.email,
+      displayName: userCredential.user.displayName,
+      photoURL: userCredential.user.photoURL,
+    });
+
+    return userCredential;
+  } catch (error) {
+    console.error('🔴 Facebook Sign-In Error:', error);
+    console.error(`Facebook Sign-In Error: ${error.message || error}`);
+  }
+}
+const Signin = ({navigation}) => {
+  // Configure Google Sign-In
+  useEffect(() => {
+    GoogleSignin.configure({
+      webClientId:
+        '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
+    });
+  }, []);
+
   return (
     <View style={styles.container}>
-      {/* Circle */}
+      {/* Top Circle */}
       <View style={styles.blue_circle}>
         <Image
           style={styles.image}
           source={require('../images/emojicropped.png')}
         />
       </View>
-      {/* Circle below text */}
+
+      {/* App Name */}
       <View style={styles.text_container}>
         <Text style={styles.text}>Chattrix</Text>
       </View>
 
-      {/* Buttons */}
+      {/* Social Sign-In Buttons */}
       <View style={styles.buttons_container}>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() =>
+            onGoogleButtonPress().then(() =>
+              console.log('Signed in with Google!'),
+            )
+          }>
           <Image
             source={require('../images/iconGoogle.png')}
             style={styles.icon}
           />
           <Text style={styles.buttons_text}>Sign in with Google</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
+
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() =>
+            onFacebookButtonPress().then(() =>
+              console.log('Signed in with Facebook!'),
+            )
+          }>
           <Image
             source={require('../images/Facebook.png')}
             style={styles.icon}
           />
-          <Text style={styles.buttons_text}>Sign in with facebook</Text>
+          <Text style={styles.buttons_text}>Sign in with Facebook</Text>
         </TouchableOpacity>
       </View>
 
-      {/* or with lines */}
+      {/* OR Divider */}
       <View style={styles.or_container}>
         <View style={styles.line}></View>
         <Text style={styles.or}>or</Text>
         <View style={styles.line}></View>
       </View>
 
-      {/* Continue with phone no. button */}
+      {/* Phone Sign-In */}
       <View style={styles.button_phone_container}>
         <TouchableOpacity style={styles.button_phone}>
           <Text style={styles.button_phone_text}>
@@ -50,20 +142,20 @@ const Signin = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Don't have an account	 */}
+      {/* Sign Up Prompt */}
       <View style={styles.dont_text_container}>
-        <Text style={styles.dont_text}>Don't have an account ?</Text>
+        <Text style={styles.dont_text}>Don't have an account?</Text>
       </View>
 
-      {/* Sign up */}
       <View style={styles.Signup_view}>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
           <Text style={styles.signup_text}>Sign up</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 };
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -107,7 +199,6 @@ const styles = StyleSheet.create({
     height: 60,
     backgroundColor: '#D9D9D9',
     alignItems: 'center',
-    // justifyContent: 'center',
     borderRadius: 99,
     marginBottom: 10,
     elevation: 10,
@@ -117,14 +208,10 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     marginRight: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   buttons_text: {
     fontSize: 20,
     color: 'black',
-    justifyContent: 'center',
-    alignItems: 'center',
     fontFamily: 'InstrumentSans-Regular',
   },
   or_container: {
@@ -156,14 +243,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 99,
-    // marginBottom: 10,
     elevation: 10,
   },
   button_phone_text: {
     fontSize: 20,
     color: 'white',
-    justifyContent: 'center',
-    alignItems: 'center',
     fontFamily: 'InstrumentSans-Regular',
   },
   dont_text_container: {
@@ -186,4 +270,5 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
 });
+
 export default Signin;

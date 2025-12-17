@@ -1,21 +1,33 @@
-import React, {useEffect} from 'react';
+import './src/i18n/i18n';
+import React, {useEffect, useContext} from 'react';
 import BootSplash from 'react-native-bootsplash';
-import {NavigationContainer} from '@react-navigation/native';
+
+// ✅ Explicitly run Google Config so it can't be tree-shaken
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
+
+import {
+  NavigationContainer,
+  getFocusedRouteNameFromRoute,
+} from '@react-navigation/native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createDrawerNavigator} from '@react-navigation/drawer';
 import Icon from 'react-native-vector-icons/Ionicons';
-import Introscreen from './src/screens/Introscreen';
-import Call_screen from './src/screens/Call_screen';
-import Settings_screen from './src/screens/Settings_screen';
-import Chat_display_screen from './src/screens/Chat_display_screen';
-import Custom_Drawer from './src/Navigation/Custom_Drawer';
 import {Image} from 'react-native';
+
+// Screens & Navigators
+import Call_screen from './src/screens/Call_screen';
 import Home_Chat_navigator from './src/Navigation/Home_Chat_navigator';
-import {getFocusedRouteNameFromRoute} from '@react-navigation/native';
+import SettingsNavigator from './src/Navigation/SettingsNavigation';
+import Custom_Drawer from './src/Navigation/Custom_Drawer';
+import AuthStack from './src/Navigation/AuthStack';
+
+// Auth Context
+import {AuthProvider, AuthContext} from './src/Auth/AuthContext';
+import Otp_screen from './src/screens/Otp_screen';
+
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
 
-// 1. Create Tab Navigator
 const TabNavigator = () => (
   <Tab.Navigator
     screenOptions={({route}) => ({
@@ -56,26 +68,51 @@ const TabNavigator = () => (
       component={Home_Chat_navigator}
       options={({route}) => {
         const routeName = getFocusedRouteNameFromRoute(route) ?? 'Home';
-
-        // Hide bottom tab bar if on 'Chat' screen
         if (routeName === 'Chat') {
-          return {
-            tabBarStyle: {display: 'none'},
-          };
+          return {tabBarStyle: {display: 'none'}};
         }
-
+        else if (routeName === 'Add_Contact') {
+          return {tabBarStyle: {display: 'none'}};
+        }
         return {};
       }}
     />
-    <Tab.Screen name="Settings" component={Settings_screen} />
+    <Tab.Screen
+      name="Settings"
+      component={SettingsNavigator}
+      options={({route}) => {
+        const routeName = getFocusedRouteNameFromRoute(route) ?? 'Settings';
+        if (
+          routeName === 'Profile' ||
+          routeName === 'EditProfile' ||
+          routeName === 'ChangePassword' ||
+          routeName === 'PrivacySettings' ||
+          routeName === 'Language'
+        ) {
+          return {tabBarStyle: {display: 'none'}};
+        }
+        return {};
+      }}
+    />
   </Tab.Navigator>
 );
 
-// 2. Use Drawer as the main navigator
-const App = () => {
+const AppContent = () => {
+  const {user, loading} = useContext(AuthContext);
+
+  // Configure Google Sign-In when app starts
+  useEffect(() => {
+    GoogleSignin.configure({
+      webClientId: '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
+      offlineAccess: true, 
+    });
+    console.log('✅ Google Sign-In initialized');
+  }, []);
+
+  // Hide BootSplash
   useEffect(() => {
     const init = async () => {
-      // do initial setup
+      // You can do any async pre-loading here if needed
     };
     init().finally(async () => {
       await BootSplash.hide({fade: true});
@@ -83,47 +120,52 @@ const App = () => {
     });
   }, []);
 
+  if (loading) {
+    return null; // or a custom Splash Screen
+  }
+
   return (
     <NavigationContainer>
-      <Drawer.Navigator
-        // initialRouteName="Tabs"
-        screenOptions={{
-          headerShown: false,
-          drawerStyle: {
-            width: '78%',
-            backgroundColor: '#D9D9D9',
-          },
-          drawerLabelStyle: {
-            fontSize: 32,
-            color: 'white',
-            fontFamily: 'IrishGrover-Regular',
-            height: 50,
-            marginHorizontal: 10,
-          },
-          drawerActiveBackgroundColor: '#510DC0',
-        }}
-        drawerContent={props => <Custom_Drawer {...props} />}>
-        <Drawer.Screen
-          name="Homie"
-          component={TabNavigator}
-          options={{
-            drawerIcon: ({focused}) => (
-              <Image source={require('./src/images/Homeicon.png')} style={{}} />
-            ),
+      {user ? (
+        <Drawer.Navigator
+          screenOptions={{
+            headerShown: false,
+            drawerStyle: {
+              width: '78%',
+              backgroundColor: '#D9D9D9',
+            },
+            drawerLabelStyle: {
+              fontSize: 32,
+              color: 'white',
+              fontFamily: 'IrishGrover-Regular',
+              height: 50,
+              marginHorizontal: 10,
+            },
+            drawerActiveBackgroundColor: '#510DC0',
           }}
-        />
-        <Drawer.Screen
-          name="Call log"
-          component={Call_screen}
-          options={{
-            drawerIcon: ({focused}) => (
-              <Image source={require('./src/images/Callicon.png')} />
-            ),
-          }}
-        />
-      </Drawer.Navigator>
+          drawerContent={props => <Custom_Drawer {...props} />}>
+          <Drawer.Screen
+            name="Tabs"
+            component={TabNavigator}
+            options={{
+              drawerIcon: () => (
+                <Image source={require('./src/images/Homeicon.png')} />
+              ),
+              drawerLabel: 'Home',
+            }}
+          />
+        </Drawer.Navigator>
+      ) : (
+        <AuthStack /> 
+      )}
     </NavigationContainer>
   );
 };
+
+const App = () => (
+  <AuthProvider>
+    <AppContent />
+  </AuthProvider>
+);
 
 export default App;

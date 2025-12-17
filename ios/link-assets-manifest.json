@@ -2,8 +2,52 @@
   "migIndex": 1,
   "data": [
     {
+      "path": "assets/fonts/InriaSans-Bold.ttf",
+      "sha1": "296ff7429ddf34cf155d05bbf9855012e94e8e02"
+    },
+    {
+      "path": "assets/fonts/InriaSans-BoldItalic.ttf",
+      "sha1": "304267fdc84b4711eef47b1a61d83d1de3554c42"
+    },
+    {
+      "path": "assets/fonts/InriaSans-Italic.ttf",
+      "sha1": "6de9355dfea86b93fd58af526b9944097a458357"
+    },
+    {
+      "path": "assets/fonts/InriaSans-Regular.ttf",
+      "sha1": "b56ee911415e9bbb591caf6bfc3d8283e9339f41"
+    },
+    {
+      "path": "assets/fonts/InstrumentSans-Regular.ttf",
+      "sha1": "85a0b0c01deba8e116ef26bb181f121564b2f48b"
+    },
+    {
       "path": "assets/fonts/IrishGrover-Regular.ttf",
       "sha1": "1a134a1449a38ec302cf456f1223f2523d72c55c"
+    },
+    {
+      "path": "assets/fonts/Milonga-Regular.ttf",
+      "sha1": "9100e4b5943dbe95f2dc05f9f7ba7c0ba7ab28f3"
+    },
+    {
+      "path": "assets/fonts/Poppins-Bold.ttf",
+      "sha1": "875cf0cecd647bcf22e79d633d868c1b1ec98dfa"
+    },
+    {
+      "path": "assets/fonts/Poppins-Medium.ttf",
+      "sha1": "283f21b44efbdbf276ba802be2d949a36bbc4233"
+    },
+    {
+      "path": "assets/fonts/Poppins-Regular.ttf",
+      "sha1": "fdd3002e7d814ee47c1c1b8487c72c6bbb3a2d00"
+    },
+    {
+      "path": "assets/fonts/Poppins-SemiBold.ttf",
+      "sha1": "8a4ace9392d06bcb7f8ea2f5169b07e4c383a90d"
+    },
+    {
+      "path": "assets/fonts/Roboto-Light.ttf",
+      "sha1": "318b44c0a32848f78bf11d4fbf3355d00647a796"
     }
   ]
 }

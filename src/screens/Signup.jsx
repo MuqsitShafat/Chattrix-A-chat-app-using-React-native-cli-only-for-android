@@ -1,7 +1,7 @@
 import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React from 'react';
 
-const Signup = () => {
+const Signup = ({navigation}) => {
   return (
     <View style={styles.container}>
       {/* Circle */}
@@ -43,7 +43,8 @@ const Signup = () => {
 
       {/* Continue with phone no. button */}
       <View style={styles.button_phone_container}>
-        <TouchableOpacity style={styles.button_phone}>
+        <TouchableOpacity style={styles.button_phone}   onPress={() => navigation.navigate('Otp_screen')} 
+         >
           <Text style={styles.button_phone_text}>
             Continue with phone number
           </Text>
@@ -57,7 +58,7 @@ const Signup = () => {
 
       {/* Sign in */}
       <View style={styles.Signup_view}>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('Login')}>
           <Text style={styles.signup_text}>Sign in</Text>
         </TouchableOpacity>
       </View>

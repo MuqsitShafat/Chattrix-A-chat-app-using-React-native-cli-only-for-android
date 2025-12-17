@@ -32,6 +32,9 @@ local.properties
 *.apk
 *.aab
 
+# Firebase
+android/app/google-services.json
+
 # IntelliJ
 .idea
 

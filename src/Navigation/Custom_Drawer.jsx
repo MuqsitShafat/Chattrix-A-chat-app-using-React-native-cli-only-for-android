@@ -5,16 +5,19 @@ import {
   ImageBackground,
   Image,
   Dimensions,
+  TouchableOpacity,
 } from 'react-native';
 import React from 'react';
 import {
   DrawerContentScrollView,
   DrawerItemList,
 } from '@react-navigation/drawer';
+import { useTranslation } from 'react-i18next';
 
 const {width, height} = Dimensions.get('screen');
 
 const Custom_Drawer = props => {
+  const {t} = useTranslation();
   return (
     <DrawerContentScrollView
       {...props}
@@ -34,7 +37,7 @@ const Custom_Drawer = props => {
               style={styles.profileImage}
             />
             <Text style={[styles.image_below_text, {marginTop: '4%'}]}>
-              George
+              {t('george')}
             </Text>
             <Text style={[styles.image_below_text, {marginTop: '2%'}]}>
               +001-234567-091
@@ -45,17 +48,54 @@ const Custom_Drawer = props => {
 
       {/* Drawer Items */}
       <View style={styles.drawerListWrapper}>
-        <DrawerItemList {...props} />
+        {/* <DrawerItemList {...props} /> */}
+        {props.state.routes.map((route, index) => {
+          // Skip rendering "Tabs" (our Home)
+          if (route.name === 'Tabs') return null;
+
+          const focused = index === props.state.index;
+
+          return (
+            <DrawerItem
+              key={route.key}
+              label={
+                props.descriptors[route.key].options.drawerLabel || route.name
+              }
+              focused={focused}
+              onPress={() => props.navigation.navigate(route.name)}
+            />
+          );
+        })}
+
+        {/* Override Home drawer item */}
+        <TouchableOpacity
+          style={styles.customDrawerItem}
+          onPress={() =>
+            props.navigation.navigate('Tabs', {screen: 'Home_Chat_navigator'})
+          }
+          activeOpacity={0.7}>
+          <Image source={require('../images/Homeicon.png')} />
+          <Text style={styles.drawerItemLabel}>{t('home')}</Text>
+        </TouchableOpacity>
+
+        {/* Custom Call button inside drawer */}
+        <TouchableOpacity
+          style={styles.customDrawerItem}
+          onPress={() => props.navigation.navigate('Tabs', {screen: 'Call'})}
+          activeOpacity={0.7}>
+          <Image source={require('../images/Callicon.png')} />
+          <Text style={styles.drawerItemLabel}>{t('call')}</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Bottom Options */}
       <View style={styles.bottomSection}>
         <View style={styles.share_app_box}>
           <Image source={require('../images/Shareappicon.png')} />
-          <Text style={styles.share_app}>Share App</Text>
+          <Text style={styles.share_app}>{t('share_app')}</Text>
         </View>
         <View style={styles.about_app_box}>
-          <Text style={styles.about}>About App</Text>
+          <Text style={styles.about}>{t('about_app')}</Text>
           <Image
             source={require('../images/alertcircle.png')}
             style={{marginLeft: '5%'}}
@@ -65,7 +105,7 @@ const Custom_Drawer = props => {
 
       {/* Footer */}
       <View style={styles.chattrix_box}>
-        <Text style={styles.Chattrix}>Chattrix</Text>
+        <Text style={styles.Chattrix}>{t('chattrix')}</Text>
       </View>
     </DrawerContentScrollView>
   );
@@ -105,8 +145,21 @@ const styles = StyleSheet.create({
   drawerListWrapper: {
     backgroundColor: '#510DC0',
     marginHorizontal: '-4.8%',
-    marginTop: '7%',
+    marginTop: '11%',
   },
+  customDrawerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 15,
+    marginLeft: 20,
+  },
+  drawerItemLabel: {
+    fontSize: 34,
+    color: 'white',
+    fontFamily: 'IrishGrover-Regular',
+    marginLeft: 20,
+  },
+
   bottomSection: {
     backgroundColor: '#510DC0',
     alignItems: 'center',
@@ -114,23 +167,25 @@ const styles = StyleSheet.create({
     marginHorizontal: '-4.8%',
   },
   share_app_box: {
-    marginLeft: '-18%',
+    marginLeft: '-13%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: '9%',
+    paddingVertical: '8%',
+    marginBottom: '-4%',
+    marginTop: '-4%',
   },
   share_app: {
     fontSize: 32,
     color: 'white',
     fontFamily: 'IrishGrover-Regular',
-    marginLeft: '8%',
+    marginLeft: '7%',
   },
   about_app_box: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: '5%',
+    paddingVertical: '7%',
   },
   about: {
     fontSize: 32,
@@ -142,7 +197,7 @@ const styles = StyleSheet.create({
   chattrix_box: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: '12%',
+    height: '16%',
     backgroundColor: 'rgba(0, 0, 0, 0.73)',
     marginHorizontal: '-4.8%',
     marginTop: '-0.1%',

@@ -16,7 +16,7 @@ import {
 import Carousel, {Pagination} from 'react-native-reanimated-carousel';
 const {height, width} = Dimensions.get('window');
 
-const Introscreen = () => {
+const Introscreen = ({navigation}) => {
   const data = [
     {id: 1, image: require('../images/Active2.png')},
     {id: 2, image: require('../images/Active1.png')},
@@ -109,7 +109,7 @@ const Introscreen = () => {
           />
         </View>
 
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity style={styles.button} onPress={() =>navigation.navigate('Login')} >
           <Text style={styles.button_text}>Get Started</Text>
         </TouchableOpacity>
       </ImageBackground>
@@ -146,6 +146,7 @@ const styles = StyleSheet.create({
   carousel: {
     flex: 1,
     marginTop: '10%',
+    marginLeft: '4%',
   },
   button: {
     backgroundColor: '#510DC0',

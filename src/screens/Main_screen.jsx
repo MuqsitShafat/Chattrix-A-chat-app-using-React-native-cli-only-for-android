@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import React from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
+import {useTranslation} from 'react-i18next';
 const users = [
   {
     name: 'Ahmed Ali',
@@ -26,14 +27,14 @@ const users = [
     image: require('../images/profile.png'),
   },
   {
-    name: 'Muqsit', 
+    name: 'Muqsit',
     message: 'Hope you’re doing well!',
     image: require('../images/profile.png'),
   },
- 
 ];
 
 const Main_screen = ({navigation}) => {
+  const {t} = useTranslation();
   return (
     <View style={styles.container}>
       {/* Top Row with menu & search icons */}
@@ -52,7 +53,7 @@ const Main_screen = ({navigation}) => {
 
       {/* Chat text */}
       <View style={styles.chat_text_view}>
-        <Text style={styles.chat_text}>Chat</Text>
+        <Text style={styles.chat_text}>{t('chat')}</Text>
       </View>
 
       {/* User List */}
@@ -61,7 +62,9 @@ const Main_screen = ({navigation}) => {
         keyExtractor={(item, index) => index.toString()}
         contentContainerStyle={{paddingHorizontal: '8%', paddingTop: '10%'}}
         renderItem={({item}) => (
-          <TouchableOpacity style={styles.flatlist_container} onPress={() => navigation.navigate('Chat')}>
+          <TouchableOpacity
+            style={styles.flatlist_container}
+            onPress={() => navigation.navigate('Chat')}>
             <Image source={item.image} style={styles.profileImage} />
             <View style={styles.chatContent}>
               <Text style={styles.userName}>{item.name}</Text>
@@ -70,7 +73,13 @@ const Main_screen = ({navigation}) => {
           </TouchableOpacity>
         )}
       />
-
+      {/* Floating Add Contact Button */}
+      <TouchableOpacity style={styles.floatingButton}   onPress={() => navigation.navigate('Add_Contact')}>
+        <Image
+          source={require('../images/add_contacts.png')}
+          style={styles.floatingIcon}
+        />
+      </TouchableOpacity>
       <View style={styles.spacing}></View>
     </View>
   );
@@ -101,7 +110,7 @@ const styles = StyleSheet.create({
   chat_text_view: {
     marginTop: '18%',
     marginLeft: '5%',
-    marginBottom : '3%'
+    marginBottom: '3%',
   },
   chat_text: {
     fontSize: 80,
@@ -135,9 +144,22 @@ const styles = StyleSheet.create({
     color: '#564141',
     marginTop: 5,
   },
-   spacing : {
-    marginTop : '19%'
-  }
+  floatingButton: {
+    position: 'absolute',
+    bottom: 100, // Adjust based on your tab bar height
+    right: 25,
+    borderRadius: 9999,
+    elevation: 3,
+    zIndex: 999,
+  },
+
+  floatingIcon: {
+    width: 60,
+    height: 60,
+  },
+  spacing: {
+    marginTop: '19%',
+  },
 });
 
 export default Main_screen;

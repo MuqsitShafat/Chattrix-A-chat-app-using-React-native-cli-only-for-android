@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import React from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
-
+import {pickMedia} from '../components/MediaPicker';
 const Chat_display_screen = ({navigation}) => {
   return (
     <SafeAreaView style={styles.container}>
@@ -20,7 +20,9 @@ const Chat_display_screen = ({navigation}) => {
       <View style={styles.Content_container}>
         {/* Left Side */}
         <View style={styles.left_section}>
-          <TouchableOpacity style={styles.back_arrow} onPress={() => navigation.goBack()}>
+          <TouchableOpacity
+            style={styles.back_arrow}
+            onPress={() => navigation.goBack()}>
             <Image
               source={require('../images/Frame.png')}
               style={styles.icon}
@@ -96,11 +98,20 @@ const Chat_display_screen = ({navigation}) => {
               style={styles.input}
             />
           </View>
-
+          {/* The import gallery pics and video button */}
           <View style={styles.send_container}>
-            <TouchableOpacity style={styles.attach_button}>
+            <TouchableOpacity
+              style={styles.attach_button}
+              onPress={async () => {
+                const media = await pickMedia(); // supports camera + gallery
+                if (media) {
+                  console.log('Picked media URI:', media.uri);
+                  // later: you can display or send it to chat
+                }
+              }}>
               <Icon name="attach-outline" size={37} color="black" />
             </TouchableOpacity>
+
             <TouchableOpacity style={styles.send_button}>
               <Icon name="send-outline" size={25} color="white" />
             </TouchableOpacity>
@@ -250,7 +261,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 10,
-    transform: [{ rotate: '40deg' }],
+    transform: [{rotate: '40deg'}],
   },
 
   send_button: {

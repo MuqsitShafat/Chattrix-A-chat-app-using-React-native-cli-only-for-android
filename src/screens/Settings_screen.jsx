@@ -6,10 +6,91 @@ import {
   TouchableOpacity,
   ScrollView,
   StatusBar,
+  Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 const Settings_screen = ({navigation}) => {
+ const { t } = useTranslation();
+const deleteAccount = () => {
+  Alert.alert(
+    'Delete Account', // Title
+    'Are you sure you want to delete your account?', // Message
+    [
+      {
+        text: 'Cancel',
+        onPress: () => console.log('Cancel Pressed'),
+        style: 'cancel',
+      },
+      {
+        text: 'OK',
+        onPress: () => console.log('OK Pressed'),
+        // logic comes when the OK button is pressed and acc is deleted
+      },
+    ],
+    {
+      cancelable: false,
+    },
+  );
+};
+const  ViewProfile = () => {
+  // Navigation to view profile comes here 
+  navigation.navigate('Profile')
+};
+const changePassword = () => {
+  Alert.alert(
+    'Change Password', // Title
+    'Are you sure you want to change your password?', // Message
+    [
+      {
+        text: 'No',
+        onPress: () => console.log('Cancel Pressed'),
+        style: 'cancel',
+      },
+      {
+        text: 'Yes',
+        onPress: () => {console.log('OK Pressed')
+          navigation.navigate('ChangePassword')
+        },
+        // logic comes when yes is pressed and change password section is opened
+      },
+    ],
+    {
+      cancelable: false,
+    },
+  );
+};
+const privacySettings = () => {
+  // a navigation to privacy settings page will come here
+ navigation.navigate('PrivacySettings')
+};
+const language = ()=>{
+  // a navigation to language settings page will come here
+  navigation.navigate('Language')
+
+}
+const logout=()=>{
+  Alert.alert(
+    'Logout', // Title
+    'Are you sure you want to logout?', // Message
+    [
+      {
+        text: 'No',
+        onPress: () => console.log('Cancel Pressed'),
+        style: 'cancel',
+      },
+      {
+        text: 'Yes',
+        onPress: () => console.log('OK Pressed'),
+        // logic comes when yes is pressed and logout section is opened
+      },
+    ],
+    {
+      cancelable: false,
+    },
+  )
+}
   return (
     <View style={styles.container}>
       {/* Top Row with menu & search icons */}
@@ -28,34 +109,34 @@ const Settings_screen = ({navigation}) => {
 
       {/* Chat text */}
       <View style={styles.chat_text_view}>
-        <Text style={styles.chat_text}>Settings</Text>
+        <Text style={styles.chat_text}>{t('settings')}</Text>
       </View>
 
       {/* 6 Touchable buttons */}
       <ScrollView contentContainerStyle={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button}>
-          <Text style={styles.buttonText}>Delete account</Text>
+        <TouchableOpacity style={styles.button} onPress={ViewProfile}>
+          <Text style={styles.buttonText}>{t('view_profile')}</Text>
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
-          <Text style={styles.buttonText}>Edit Profile</Text>
+        <TouchableOpacity style={styles.button} onPress={deleteAccount}>
+          <Text style={styles.buttonText}>{t('delete_account')}</Text>
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
-          <Text style={styles.buttonText}>Change Password</Text>
+        <TouchableOpacity style={styles.button} onPress={changePassword}>
+          <Text style={styles.buttonText}>{t('change_password')}</Text>
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
-          <Text style={styles.buttonText}>Privacy Settings</Text>
+        <TouchableOpacity style={styles.button} onPress={privacySettings}>
+          <Text style={styles.buttonText}>{t('privacy_settings')}</Text>
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
-          <Text style={styles.buttonText}>Language</Text>
+        <TouchableOpacity style={styles.button} onPress={language}>
+          <Text style={styles.buttonText}>{t('language')}</Text>
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity style={styles.button} onPress={logout}>
           <View style={styles.logoutRow}>
-            <Text style={styles.buttonText}>Logout</Text>
+            <Text style={styles.buttonText}>{t('logout')}</Text>
             <Image
               style={styles.logoutArrow}
               source={require('../images/Logoutarrow.png')}
@@ -105,6 +186,7 @@ const styles = StyleSheet.create({
   buttonContainer: {
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: '3%',
   },
   button: {
     width: '90%',

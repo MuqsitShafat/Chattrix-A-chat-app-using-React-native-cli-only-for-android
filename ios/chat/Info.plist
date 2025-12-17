@@ -50,6 +50,17 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>IrishGrover-Regular.ttf</string>
+		<string>InstrumentSans-Regular.ttf</string>
+		<string>Poppins-Bold.ttf</string>
+		<string>Poppins-Medium.ttf</string>
+		<string>Poppins-Regular.ttf</string>
+		<string>Poppins-SemiBold.ttf</string>
+		<string>Roboto-Light.ttf</string>
+		<string>Milonga-Regular.ttf</string>
+		<string>InriaSans-Bold.ttf</string>
+		<string>InriaSans-Italic.ttf</string>
+		<string>InriaSans-Regular.ttf</string>
+		<string>InriaSans-BoldItalic.ttf</string>
 	</array>
 </dict>
 </plist>
