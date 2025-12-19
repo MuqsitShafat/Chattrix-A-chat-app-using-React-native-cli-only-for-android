@@ -12,6 +12,16 @@ import {
 import React, {useState} from 'react';
 import {useTranslation} from 'react-i18next';
 
+// 1. MODULAR IMPORTS (Updated)
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc, 
+  serverTimestamp 
+} from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
+
 const ContactInfo_screen = ({navigation}) => {
   const {t} = useTranslation();
 
@@ -19,27 +29,49 @@ const ContactInfo_screen = ({navigation}) => {
   const [mobile, setmobile] = useState('');
 
   const confirmChanges = () => {
+    if (name.trim() === '' || mobile.trim() === '') {
+      Alert.alert('Error', 'Please enter both name and mobile number');
+      return;
+    }
+
     Alert.alert(
       'Confirm Changes',
       'Are you sure you want to save this contact information?',
       [
-        {
-          text: 'Cancel',
-          onPress: () => console.log('Cancel Pressed'),
-          style: 'cancel',
-        },
+        { text: 'Cancel', style: 'cancel' },
         {
           text: 'Save',
-          onPress: () => {
-            console.log('Save Pressed');
+          onPress: async () => {
+            try {
+              // 2. MODULAR SERVICE INITIALIZATION
+              const auth = getAuth();
+              const db = getFirestore();
+              const user = auth.currentUser;
 
-            // ✅ Clear all states
-            setname('');
-            setmobile('');
+              if (user) {
+                // 3. MODULAR DATA SAVING
+                // We point to the specific sub-collection path
+                const contactsRef = collection(db, 'users', user.uid, 'contacts');
+                
+                await addDoc(contactsRef, {
+                  name: name,
+                  mobile: mobile,
+                  message: 'New contact added',
+                  createdAt: serverTimestamp(), // Modular way to get server time
+                });
+
+                Alert.alert('Success', 'Contact saved!');
+                setname('');
+                setmobile('');
+                navigation.goBack();
+              }
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Error', 'Could not save contact.');
+            }
           },
         },
-      ],
-      {cancelable: false},
+      ]
     );
   };
 
@@ -49,12 +81,10 @@ const ContactInfo_screen = ({navigation}) => {
 
   return (
     <View style={styles.container}>
-      {/* Border Lines */}
       <View style={styles.borderLeft}></View>
       <View style={styles.borderTop}></View>
       <View style={styles.borderRight}></View>
 
-      {/* Top Row with back button */}
       <View style={styles.topRow}>
         <TouchableOpacity onPress={goBack}>
           <Image source={require('../images/Frame.png')} />
@@ -70,7 +100,6 @@ const ContactInfo_screen = ({navigation}) => {
           <View style={{width: '100%', height: 25}}></View>
         </View>
 
-        {/* Add Contact Info Section */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Personal Information </Text>
 
@@ -100,7 +129,6 @@ const ContactInfo_screen = ({navigation}) => {
 
         <View style={{width: '100%', height: 35}}></View>
 
-        {/* Confirm Changes Button */}
         <View style={styles.confirmSection}>
           <TouchableOpacity
             style={styles.confirmButton}
@@ -110,7 +138,6 @@ const ContactInfo_screen = ({navigation}) => {
         </View>
       </ScrollView>
 
-      {/* Purple Circle with Chat Bubbles */}
       <View style={styles.blue_circle}>
         <Image
           style={styles.image}
@@ -166,9 +193,6 @@ const styles = StyleSheet.create({
     color: 'black',
     fontFamily: 'IrishGrover-Regular',
   },
-  placeholder: {
-    width: 30,
-  },
   scrollContainer: {
     flex: 1,
     paddingHorizontal: 22,
@@ -189,8 +213,8 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end', // ensures the label baseline aligns with the input underline
-    marginBottom: 10, // spacing between rows
+    alignItems: 'flex-end',
+    marginBottom: 10,
   },
   inputLabel: {
     fontSize: 16,
@@ -226,10 +250,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: '100%',
     height: '32%',
-    borderTopLeftRadius: '50%',
-    borderTopRightRadius: '50%',
+    borderTopLeftRadius: 100, // Fixed string percentage warning
+    borderTopRightRadius: 100,
     backgroundColor: '#510DC0',
-    overflow: 'hidden', // 🔑 clips the image inside
+    overflow: 'hidden',
   },
   image: {
     width: '100%',

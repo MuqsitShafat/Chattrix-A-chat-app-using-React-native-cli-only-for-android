@@ -51,5 +51,7 @@
   "all_languages": "Toutes les langues",
   "search": "Rechercher",
   "loading_languages": "Chargement des langues...",
-  "continue": "Continuer"
+  "continue": "Continuer",
+    "connect_friends": "Connectons-nous avec tes amis",
+  "hit_add_button": "Appuie sur le bouton Ajouter"
 }

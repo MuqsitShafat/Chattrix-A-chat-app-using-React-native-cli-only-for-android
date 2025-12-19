@@ -20,7 +20,7 @@
   "naqi": "Naqi",
   "mustafa": "Mustafa",
   "time_8am": "8:00 am",
-    "profile": "Profile",
+  "profile": "Profile",
   "edit_profile": "Edit Profile",
   "name": "Name",
   "phone": "Phone",
@@ -44,12 +44,14 @@
   "password": "Password:",
   "new_password": "New Password:",
   "confirm_password": "Confirm Password:",
-  "password_section" : "Password Section",
-    "choose_language": "Choose the language",
+  "password_section": "Password Section",
+  "choose_language": "Choose the language",
   "select_preferred_language": "Select your preferred language below. This helps us serve you better.",
   "you_selected": "You Selected",
   "all_languages": "All Languages",
   "search": "Search",
   "loading_languages": "Loading languages...",
-  "continue": "Continue"
+  "continue": "Continue",
+  "connect_friends": "Let’s connect with your friends",
+  "hit_add_button": "Tap the add button"
 }
