@@ -11,6 +11,8 @@ import React, {useEffect, useState} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import {BackHandler} from 'react-native';
+// 1. IMPORT LOTTIE
+import LottieView from 'lottie-react-native';
 
 const users = [
   {name: 'ahmed_ali', time: 'time_8am'},
@@ -25,12 +27,10 @@ const users = [
 const Call_screen = ({navigation}) => {
   const {t} = useTranslation();
 
-  /* 🔹 ADDED STATE (only for feature) */
   const [data, setData] = useState(users);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
-  /* 🔹 ADDED FUNCTIONS */
   const onLongPressItem = index => {
     setSelectionMode(true);
     setSelectedItems([index]);
@@ -38,7 +38,6 @@ const Call_screen = ({navigation}) => {
 
   const onPressItem = index => {
     if (!selectionMode) return;
-
     if (selectedItems.includes(index)) {
       setSelectedItems(selectedItems.filter(i => i !== index));
     } else {
@@ -56,14 +55,15 @@ const Call_screen = ({navigation}) => {
   const selectAll = () => {
     setSelectedItems(data.map((_, index) => index));
   };
+
   useEffect(() => {
     const backAction = () => {
       if (selectionMode) {
         setSelectionMode(false);
         setSelectedItems([]);
-        return true; // ⛔ stop app from closing
+        return true; 
       }
-      return false; // ✅ normal back behavior
+      return false; 
     };
 
     const backHandler = BackHandler.addEventListener(
@@ -73,9 +73,9 @@ const Call_screen = ({navigation}) => {
 
     return () => backHandler.remove();
   }, [selectionMode, selectedItems]);
+
   return (
     <View style={styles.container}>
-      {/* 🔹 TOP BAR UPDATED (ONLY LOGIC) */}
       <View style={styles.topRow}>
         {selectionMode ? (
           <>
@@ -113,58 +113,72 @@ const Call_screen = ({navigation}) => {
         <Text style={styles.chat_text}>{t('call')}</Text>
       </View>
 
-      <FlatList
-        data={data}
-        keyExtractor={(item, index) => index.toString()}
-        contentContainerStyle={{
-          paddingHorizontal: '8%',
-          paddingTop: '5%',
-          paddingBottom: '5%',
-        }}
-        renderItem={({item, index}) => {
-          const isSelected = selectedItems.includes(index);
+      {/* 2. CONDITIONAL RENDERING FOR LOTTIE */}
+      {data.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <LottieView
+            source={require('../assets/animations/phone_history.json')} // Ensure path is correct
+            autoPlay
+            loop
+            style={styles.lottieStyle}
+          />
+          <Text style={styles.emptyText}>No call history found</Text>
+          <Text style={styles.subText}>Your recent calls will appear here</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={data}
+          keyExtractor={(item, index) => index.toString()}
+          contentContainerStyle={{
+            paddingHorizontal: '8%',
+            paddingTop: '5%',
+            paddingBottom: '5%',
+          }}
+          renderItem={({item, index}) => {
+            const isSelected = selectedItems.includes(index);
 
-          return (
-            <TouchableOpacity
-              onLongPress={() => onLongPressItem(index)}
-              onPress={() => onPressItem(index)}
-              activeOpacity={0.8}>
-              <View
-                style={[
-                  styles.flatlist_container,
-                  isSelected && {backgroundColor: '#8BB3FF'},
-                ]}>
-                {selectionMode && (
-                  <Icon
-                    name={isSelected ? 'checkbox' : 'square-outline'}
-                    size={25}
-                    style={{marginRight: 10}}
-                  />
-                )}
+            return (
+              <TouchableOpacity
+                onLongPress={() => onLongPressItem(index)}
+                onPress={() => onPressItem(index)}
+                activeOpacity={0.8}>
+                <View
+                  style={[
+                    styles.flatlist_container,
+                    isSelected && {backgroundColor: '#8BB3FF'},
+                  ]}>
+                  {selectionMode && (
+                    <Icon
+                      name={isSelected ? 'checkbox' : 'square-outline'}
+                      size={25}
+                      style={{marginRight: 10}}
+                    />
+                  )}
 
-                <View style={styles.nameContainer}>
-                  <Text
-                    style={styles.userName}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit>
-                    {t(item.name)}
-                  </Text>
+                  <View style={styles.nameContainer}>
+                    <Text
+                      style={styles.userName}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit>
+                      {t(item.name)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.iconContainer}>
+                    <TouchableOpacity>
+                      <Icon name="call-outline" size={30} color="#4175DF" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.timeContainer}>
+                    <Text style={styles.user_time}>{t(item.time)}</Text>
+                  </View>
                 </View>
-
-                <View style={styles.iconContainer}>
-                  <TouchableOpacity>
-                    <Icon name="call-outline" size={30} color="#4175DF" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.timeContainer}>
-                  <Text style={styles.user_time}>{t(item.time)}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        }}
-      />
+              </TouchableOpacity>
+            );
+          }}
+        />
+      )}
 
       <View style={styles.spacing}></View>
     </View>
@@ -228,6 +242,32 @@ const styles = StyleSheet.create({
     fontFamily: 'IrishGrover-Regular',
   },
   spacing: {marginTop: '19%'},
+
+  // 3. ADDED LOTTIE STYLES
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingBottom: 50,
+  },
+  lottieStyle: {
+    width: 250,
+    height: 250,
+  },
+  emptyText: {
+    fontSize: 22,
+    color: '#510DC0',
+    fontFamily: 'IrishGrover-Regular',
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  subText: {
+    fontSize: 16,
+    color: '#75926bff',
+    fontFamily: 'IrishGrover-Regular',
+    textAlign: 'center',
+    marginTop: 5,
+  },
 });
 
 export default Call_screen;

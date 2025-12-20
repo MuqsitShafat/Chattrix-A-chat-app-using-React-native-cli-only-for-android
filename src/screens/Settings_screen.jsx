@@ -11,6 +11,12 @@ import {
 import Icon from 'react-native-vector-icons/Ionicons';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+// Modular API imports
+import { getAuth, signOut } from '@react-native-firebase/auth';
+// Fix: Use named import for GoogleSignin
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import { LoginManager } from 'react-native-fbsdk-next';
+
 const Settings_screen = ({navigation}) => {
  const { t } = useTranslation();
 const deleteAccount = () => {
@@ -74,6 +80,7 @@ const logout=()=>{
   Alert.alert(
     'Logout', // Title
     'Are you sure you want to logout?', // Message
+    
     [
       {
         text: 'No',
@@ -82,12 +89,34 @@ const logout=()=>{
       },
       {
         text: 'Yes',
-        onPress: () => console.log('OK Pressed'),
-        // logic comes when yes is pressed and logout section is opened
+        onPress: async () => {
+          console.log('OK Pressed');
+          // logic comes when yes is pressed and logout section is opened
+          try {
+            // 1. Firebase Sign Out (Modular API)
+            const auth = getAuth();
+            await signOut(auth);
+
+            // 2. Google Sign Out (Named export fix)
+            // This ensures the account picker shows up next time
+            await GoogleSignin.signOut();
+
+            // 3. Facebook Sign Out
+            LoginManager.logOut();
+            
+            console.log('Logout successful: Firebase, Google, and Facebook cleared.');
+            // navigation.replace('Login'); 
+          } catch (error) {
+            console.error('Logout Error:', error);
+            // We show an alert but often logout errors can be ignored 
+            // if the Firebase session is already dead.
+            Alert.alert('Error', 'Failed to log out. Please try again.');
+          }
+        },
       },
     ],
     {
-      cancelable: false,
+      cancelable: true,
     },
   )
 }
@@ -190,10 +219,10 @@ const styles = StyleSheet.create({
   },
   button: {
     width: '90%',
-    height: 70,
-    backgroundColor: '#D3E2F8',
+    height: 65,
+    backgroundColor: '#bdc8daff',
     borderRadius: 55,
-    marginBottom: '3%',
+    marginBottom: '4%',
     justifyContent: 'space-between',
     alignItems: 'center',
     flexDirection: 'row',
@@ -201,9 +230,9 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   buttonText: {
-    color: 'black',
+    color: '#594d6bff',
     fontSize: 24,
-    fontFamily: 'Roboto Light',
+    fontFamily: 'InriaSans-Regular',
   },
   arrow: {
     width: 25,
