@@ -53,5 +53,7 @@
   "loading_languages": "Chargement des langues...",
   "continue": "Continuer",
     "connect_friends": "Connectons-nous avec tes amis",
-  "hit_add_button": "Appuie sur le bouton Ajouter"
+  "hit_add_button": "Appuie sur le bouton Ajouter",
+    "user": "Utilisateur",
+     "about_app_screen": "Chattrix est une application de communication moderne qui vous permet de rester connecté avec vos amis facilement. Connectez-vous en toute sécurité via Google, Facebook ou votre numéro de téléphone. Discutez instantanément, passez des appels vocaux et restez connecté partout et à tout moment. Chattrix rend la communication simple et fiable."
 }

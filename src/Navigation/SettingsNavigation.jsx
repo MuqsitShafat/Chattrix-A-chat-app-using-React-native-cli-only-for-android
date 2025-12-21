@@ -7,6 +7,7 @@ import EditProfile from '../screens/EditProfile';
 import ChangePassword_screen from '../screens/ChangePasswordScreen';
 import PrivacySettings_screen from '../screens/PrivacySettings';
 import Language_screen from '../screens/Language';
+import About from '../screens/About';
 
 const Stack = createNativeStackNavigator();
 
@@ -19,6 +20,7 @@ const SettingsNavigator = () => {
       <Stack.Screen name="ChangePassword" component={ChangePassword_screen} />
       <Stack.Screen name="PrivacySettings" component={PrivacySettings_screen} />
       <Stack.Screen name="Language" component={Language_screen} />
+      <Stack.Screen name="About" component={About} />
     </Stack.Navigator>
   );
 };

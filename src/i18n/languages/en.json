@@ -53,5 +53,7 @@
   "loading_languages": "Loading languages...",
   "continue": "Continue",
   "connect_friends": "Let’s connect with your friends",
-  "hit_add_button": "Tap the add button"
+  "hit_add_button": "Tap the add button",
+  "user": "User",
+    "about_app_screen": "Chattrix is a modern communication app that lets you connect with friends easily. Sign in securely using Google, Facebook, or your mobile number. Chat instantly, make voice calls, and stay connected anytime, anywhere. Chattrix is built to make conversations simple, fast, and reliable."
 }

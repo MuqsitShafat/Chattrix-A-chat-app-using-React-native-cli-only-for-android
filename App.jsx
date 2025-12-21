@@ -70,8 +70,7 @@ const TabNavigator = () => (
         const routeName = getFocusedRouteNameFromRoute(route) ?? 'Home';
         if (routeName === 'Chat') {
           return {tabBarStyle: {display: 'none'}};
-        }
-        else if (routeName === 'Add_Contact') {
+        } else if (routeName === 'Add_Contact') {
           return {tabBarStyle: {display: 'none'}};
         }
         return {};
@@ -80,19 +79,33 @@ const TabNavigator = () => (
     <Tab.Screen
       name="Settings"
       component={SettingsNavigator}
-      options={({route}) => {
-        const routeName = getFocusedRouteNameFromRoute(route) ?? 'Settings';
-        if (
-          routeName === 'Profile' ||
-          routeName === 'EditProfile' ||
-          routeName === 'ChangePassword' ||
-          routeName === 'PrivacySettings' ||
-          routeName === 'Language'
-        ) {
-          return {tabBarStyle: {display: 'none'}};
-        }
-        return {};
-      }}
+      options={({route}) => ({
+        unmountOnBlur: true, // 🔑 ADD THIS: Resets the stack when you switch tabs
+        tabBarStyle: (() => {
+          const routeName = getFocusedRouteNameFromRoute(route) ?? 'Settings';
+          if (
+            [
+              'Profile',
+              'EditProfile',
+              'ChangePassword',
+              'PrivacySettings',
+              'Language',
+              'About',
+            ].includes(routeName)
+          ) {
+            return {display: 'none'};
+          }
+          return {
+            height: 60,
+            borderRadius: 30,
+            marginHorizontal: 20,
+            marginBottom: 18,
+            position: 'absolute',
+            backgroundColor: '#D9D9D9',
+            elevation: 5,
+          };
+        })(),
+      })}
     />
   </Tab.Navigator>
 );
@@ -103,8 +116,9 @@ const AppContent = () => {
   // Configure Google Sign-In when app starts
   useEffect(() => {
     GoogleSignin.configure({
-      webClientId: '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
-      offlineAccess: true, 
+      webClientId:
+        '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
+      offlineAccess: true,
     });
     console.log('✅ Google Sign-In initialized');
   }, []);
@@ -156,7 +170,7 @@ const AppContent = () => {
           />
         </Drawer.Navigator>
       ) : (
-        <AuthStack /> 
+        <AuthStack />
       )}
     </NavigationContainer>
   );
