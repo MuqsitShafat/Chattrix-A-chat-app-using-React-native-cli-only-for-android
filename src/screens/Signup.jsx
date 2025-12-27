@@ -1,7 +1,30 @@
 import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React from 'react';
 
+// ✅ Added Firestore imports for registering users
+import { getFirestore, doc, setDoc } from '@react-native-firebase/firestore';
+import { getAuth } from '@react-native-firebase/auth';
+
 const Signup = ({navigation}) => {
+
+  //! 1. DATABASE SYNC LOGIC: This function saves the authenticated user to the 'users' collection
+  //! so that other people can search for them via email and add them as contacts.
+  const saveUserToFirestore = async (user) => {
+    try {
+      const db = getFirestore();
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email.toLowerCase(), //* Saved in lowercase for reliable searching
+        name: user.displayName || 'Chattrix User',
+        profilePic: user.photoURL || '',
+      }, { merge: true }); //* 'merge: true' ensures we don't overwrite their existing friend lists/data
+      console.log('User successfully registered in Firestore');
+    } catch (error) {
+      console.error('Error saving user to Firestore:', error);
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* Circle */}
@@ -18,14 +41,28 @@ const Signup = ({navigation}) => {
 
       {/* Buttons */}
       <View style={styles.buttons_container}>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity 
+          style={styles.button}
+          onPress={() => 
+            onGoogleButtonPress().then((userCredential) => {
+              if (userCredential) saveUserToFirestore(userCredential.user);
+            })
+          }
+        >
           <Image
             source={require('../images/iconGoogle.png')}
             style={styles.icon}
           />
           <Text style={styles.buttons_text}>Continue with Google</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity 
+          style={styles.button}
+          onPress={() => 
+            onFacebookButtonPress().then((userCredential) => {
+              if (userCredential) saveUserToFirestore(userCredential.user);
+            })
+          }
+        >
           <Image
             source={require('../images/Facebook.png')}
             style={styles.icon}

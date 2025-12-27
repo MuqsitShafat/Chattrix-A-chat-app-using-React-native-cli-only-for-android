@@ -1,6 +1,9 @@
 import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React, {useEffect} from 'react';
 
+// ✅ Added Firestore imports
+import { getFirestore, doc, setDoc } from '@react-native-firebase/firestore';
+
 // ✅ Google Sign-In & Firebase Auth
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {
@@ -10,73 +13,72 @@ import {
   signInWithCredential,
 } from '@react-native-firebase/auth';
 import {LoginManager, AccessToken} from 'react-native-fbsdk-next';
+
+// 2. DATABASE SYNC LOGIC: This ensures that when an existing user signs back in,
+// their searchable profile in Firestore is updated (e.g., if they changed their Google photo).
+async function saveUserToFirestore(user) {
+  try {
+    const db = getFirestore();
+    const userRef = doc(db, 'users', user.uid);
+    await setDoc(userRef, {
+      uid: user.uid,
+      email: user.email.toLowerCase(),
+      name: user.displayName || 'Chattrix User',
+      profilePic: user.photoURL || '',
+    }, { merge: true });
+  } catch (error) {
+    console.error('Firestore Sync Error:', error);
+  }
+}
+
 //? Google Sign-In function
 async function onGoogleButtonPress() {
   try {
-    // Check if device supports Google Play Services
     await GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: true});
-
-    // Sign in and get ID token
     const signInResult = await GoogleSignin.signIn();
     let idToken = signInResult.data?.idToken || signInResult.idToken;
 
     if (!idToken) throw new Error('No ID token found');
 
-    // Create Firebase credential and sign in
     const googleCredential = GoogleAuthProvider.credential(idToken);
-    return signInWithCredential(getAuth(), googleCredential);
+    const userCredential = await signInWithCredential(getAuth(), googleCredential);
+    
+    // Trigger the save to Firestore
+    await saveUserToFirestore(userCredential.user);
+    
+    return userCredential;
   } catch (error) {
     console.error('Google Sign-In Error:', error);
   }
 }
+
 //? Facebook Sign-In function
-// ✅ Facebook Sign-In function (with detailed console logs)
 async function onFacebookButtonPress() {
   try {
     console.log('🟢 Starting Facebook login...');
-
-    // 1️⃣ Trigger Facebook Login
     const result = await LoginManager.logInWithPermissions(['public_profile', 'email']);
-    console.log('📢 Facebook login result:', result);
+    if (result.isCancelled) return;
 
-    if (result.isCancelled) {
-      console.warn('⚠️ Login cancelled by user');
-      return;
-    }
-
-    // 2️⃣ Get the Access Token
     const data = await AccessToken.getCurrentAccessToken();
-    console.log('📢 Facebook AccessToken data:', data);
-
     if (!data) throw new Error('No access token found');
 
-    // 3️⃣ Create Firebase credential
     const credential = FacebookAuthProvider.credential(data.accessToken);
-    console.log('📢 Facebook credential created, signing in with Firebase...');
-
-    // 4️⃣ Sign in with Firebase using modular API
     const auth = getAuth();
     const userCredential = await signInWithCredential(auth, credential);
 
-    console.log('✅ Facebook sign-in successful:', {
-      uid: userCredential.user.uid,
-      email: userCredential.user.email,
-      displayName: userCredential.user.displayName,
-      photoURL: userCredential.user.photoURL,
-    });
+    // Trigger the save to Firestore
+    await saveUserToFirestore(userCredential.user);
 
     return userCredential;
   } catch (error) {
     console.error('🔴 Facebook Sign-In Error:', error);
-    console.error(`Facebook Sign-In Error: ${error.message || error}`);
   }
 }
+
 const Signin = ({navigation}) => {
-  // Configure Google Sign-In
   useEffect(() => {
     GoogleSignin.configure({
-      webClientId:
-        '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
+      webClientId: '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
     });
   }, []);
 
@@ -101,7 +103,7 @@ const Signin = ({navigation}) => {
           style={styles.button}
           onPress={() =>
             onGoogleButtonPress().then(() =>
-              console.log('Signed in with Google!'),
+              console.log('Signed in with Google and synced to Firestore!'),
             )
           }>
           <Image
@@ -115,7 +117,7 @@ const Signin = ({navigation}) => {
           style={styles.button}
           onPress={() =>
             onFacebookButtonPress().then(() =>
-              console.log('Signed in with Facebook!'),
+              console.log('Signed in with Facebook and synced to Firestore!'),
             )
           }>
           <Image

@@ -6,76 +6,126 @@ import {
   TouchableOpacity,
   FlatList,
   StatusBar,
+  BackHandler,
 } from 'react-native';
 import React, {useEffect, useState} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
-import {BackHandler} from 'react-native';
-// 1. IMPORT LOTTIE
 import LottieView from 'lottie-react-native';
 
-const users = [
-  {name: 'ahmed_ali', time: 'time_8am'},
-  {name: 'fatima_zahra', time: 'time_8am'},
-  {name: 'hassan_raza', time: 'time_8am'},
-  {name: 'muqsit', time: 'time_8am'},
-  {name: 'naqi', time: 'time_8am'},
-  {name: 'mustafa', time: 'time_8am'},
-  {name: 'hassan_raza', time: 'time_8am'},
-];
+// 1. UPDATED MODULAR IMPORTS
+import { getAuth } from '@react-native-firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  onSnapshot, 
+  writeBatch, 
+  doc, 
+  serverTimestamp 
+} from '@react-native-firebase/firestore';
 
 const Call_screen = ({navigation}) => {
   const {t} = useTranslation();
-
-  const [data, setData] = useState(users);
+  const [data, setData] = useState([]); // Start with empty array
+  const [loading, setLoading] = useState(true); // Added loading state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
-  const onLongPressItem = index => {
-    setSelectionMode(true);
-    setSelectedItems([index]);
-  };
+ // 2. INITIALIZE MODULAR INSTANCES
+  const auth = getAuth();
+  const db = getFirestore();
+  const user = auth.currentUser;
 
-  const onPressItem = index => {
-    if (!selectionMode) return;
-    if (selectedItems.includes(index)) {
-      setSelectedItems(selectedItems.filter(i => i !== index));
-    } else {
-      setSelectedItems([...selectedItems, index]);
+  // 📡 Real-time listener (Modular Style)
+  useEffect(() => {
+    if (!user) return;
+
+    // Build the query using modular functions
+    const callsQuery = query(
+      collection(db, 'calls'),
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(callsQuery, (querySnapshot) => {
+      const calls = [];
+      querySnapshot.forEach((documentSnapshot) => {
+        calls.push({
+          ...documentSnapshot.data(),
+          id: documentSnapshot.id,
+        });
+      });
+      setData(calls);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore Error: ", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // 🗑️ Delete logic (Modular Style)
+  const deleteSelected = async () => {
+    try {
+      const batch = writeBatch(db); // Create batch
+      
+      selectedItems.forEach(itemId => {
+        const docRef = doc(db, 'calls', itemId);
+        batch.delete(docRef);
+      });
+
+      await batch.commit();
+      setSelectedItems([]);
+      setSelectionMode(false);
+    } catch (error) {
+      console.error("Delete failed: ", error);
     }
   };
 
-  const deleteSelected = () => {
-    const newData = data.filter((_, index) => !selectedItems.includes(index));
-    setData(newData);
-    setSelectedItems([]);
-    setSelectionMode(false);
+  const onLongPressItem = id => {
+    setSelectionMode(true);
+    setSelectedItems([id]);
+  };
+
+  const onPressItem = id => {
+    if (!selectionMode) return;
+    if (selectedItems.includes(id)) {
+      setSelectedItems(selectedItems.filter(i => i !== id));
+    } else {
+      setSelectedItems([...selectedItems, id]);
+    }
   };
 
   const selectAll = () => {
-    setSelectedItems(data.map((_, index) => index));
+    setSelectedItems(data.map(item => item.id));
   };
 
+  // Hardware Back Button Handler
   useEffect(() => {
     const backAction = () => {
       if (selectionMode) {
         setSelectionMode(false);
         setSelectedItems([]);
-        return true; 
+        return true;
       }
-      return false; 
+      return false;
     };
-
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       backAction,
     );
-
     return () => backHandler.remove();
-  }, [selectionMode, selectedItems]);
+  }, [selectionMode]);
+
+  if (loading) return null; // Or a small activity indicator
 
   return (
     <View style={styles.container}>
+      {/* Top Header Row */}
       <View style={styles.topRow}>
         {selectionMode ? (
           <>
@@ -86,11 +136,9 @@ const Call_screen = ({navigation}) => {
               }}>
               <Icon name="close" size={35} color="black" />
             </TouchableOpacity>
-
             <TouchableOpacity onPress={selectAll}>
               <Text style={styles.select_all}>Select All</Text>
             </TouchableOpacity>
-
             <TouchableOpacity onPress={deleteSelected}>
               <Icon name="trash" size={30} color="red" />
             </TouchableOpacity>
@@ -113,11 +161,11 @@ const Call_screen = ({navigation}) => {
         <Text style={styles.chat_text}>{t('call')}</Text>
       </View>
 
-      {/* 2. CONDITIONAL RENDERING FOR LOTTIE */}
+      {/* 🎰 AUTOMATIC TOGGLE: List vs Lottie */}
       {data.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
-            source={require('../assets/animations/phone_history.json')} // Ensure path is correct
+            source={require('../assets/animations/phone_history.json')}
             autoPlay
             loop
             style={styles.lottieStyle}
@@ -128,19 +176,14 @@ const Call_screen = ({navigation}) => {
       ) : (
         <FlatList
           data={data}
-          keyExtractor={(item, index) => index.toString()}
-          contentContainerStyle={{
-            paddingHorizontal: '8%',
-            paddingTop: '5%',
-            paddingBottom: '5%',
-          }}
-          renderItem={({item, index}) => {
-            const isSelected = selectedItems.includes(index);
-
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listPadding}
+          renderItem={({item}) => {
+            const isSelected = selectedItems.includes(item.id);
             return (
               <TouchableOpacity
-                onLongPress={() => onLongPressItem(index)}
-                onPress={() => onPressItem(index)}
+                onLongPress={() => onLongPressItem(item.id)}
+                onPress={() => onPressItem(item.id)}
                 activeOpacity={0.8}>
                 <View
                   style={[
@@ -154,24 +197,19 @@ const Call_screen = ({navigation}) => {
                       style={{marginRight: 10}}
                     />
                   )}
-
                   <View style={styles.nameContainer}>
                     <Text
                       style={styles.userName}
                       numberOfLines={1}
                       adjustsFontSizeToFit>
-                      {t(item.name)}
+                      {item.name}
                     </Text>
                   </View>
-
                   <View style={styles.iconContainer}>
-                    <TouchableOpacity>
-                      <Icon name="call-outline" size={30} color="#4175DF" />
-                    </TouchableOpacity>
+                    <Icon name="call-outline" size={30} color="#4175DF" />
                   </View>
-
                   <View style={styles.timeContainer}>
-                    <Text style={styles.user_time}>{t(item.time)}</Text>
+                    <Text style={styles.user_time}>{item.time}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -179,7 +217,6 @@ const Call_screen = ({navigation}) => {
           }}
         />
       )}
-
       <View style={styles.spacing}></View>
     </View>
   );
@@ -193,7 +230,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 15,
     marginTop: StatusBar.currentHeight,
-    zIndex: 1,
+    zIndex: 5,
   },
   circle: {
     width: '70%',
@@ -213,7 +250,11 @@ const styles = StyleSheet.create({
     fontSize: 80,
     color: 'black',
     fontFamily: 'IrishGrover-Regular',
-    marginBottom: '4%',
+  },
+  listPadding: {
+    paddingHorizontal: '8%',
+    paddingTop: '5%',
+    paddingBottom: 100, // Extra space for TabBar
   },
   flatlist_container: {
     backgroundColor: '#D3E2F8',
@@ -226,46 +267,27 @@ const styles = StyleSheet.create({
   nameContainer: {flex: 1},
   iconContainer: {flex: 1, alignItems: 'center'},
   timeContainer: {flex: 1, alignItems: 'flex-end'},
-  userName: {
-    fontSize: 25,
-    color: 'black',
-    fontFamily: 'IrishGrover-Regular',
-  },
-  user_time: {
-    fontSize: 20,
-    color: 'black',
-    fontFamily: 'IrishGrover-Regular',
-  },
-  select_all: {
-    fontSize: 20,
-    color: 'white',
-    fontFamily: 'IrishGrover-Regular',
-  },
+  userName: {fontSize: 25, color: 'black', fontFamily: 'IrishGrover-Regular'},
+  user_time: {fontSize: 20, color: 'black', fontFamily: 'IrishGrover-Regular'},
+  select_all: {fontSize: 20, color: 'white', fontFamily: 'IrishGrover-Regular'},
   spacing: {marginTop: '19%'},
-
-  // 3. ADDED LOTTIE STYLES
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingBottom: 50,
+    paddingBottom: 100,
   },
-  lottieStyle: {
-    width: 250,
-    height: 250,
-  },
+  lottieStyle: {width: 250, height: 250},
   emptyText: {
     fontSize: 22,
     color: '#510DC0',
     fontFamily: 'IrishGrover-Regular',
-    textAlign: 'center',
     marginTop: 10,
   },
   subText: {
     fontSize: 16,
     color: '#75926bff',
     fontFamily: 'IrishGrover-Regular',
-    textAlign: 'center',
     marginTop: 5,
   },
 });

@@ -8,6 +8,10 @@ import {
   onSnapshot,
   query,
   orderBy,
+  updateDoc,
+  getDocs,
+  deleteDoc,
+  writeBatch,
 } from '@react-native-firebase/firestore';
 import {getAuth} from '@react-native-firebase/auth';
 import {
@@ -18,97 +22,168 @@ import {
   TouchableOpacity,
   FlatList,
   StatusBar,
+  TextInput,
+  Alert,
+  BackHandler,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import LottieView from 'lottie-react-native';
-const users = [
-  {
-    name: 'Ahmed Ali',
-    message: 'Assalamu Alaikum!',
-    image: require('../images/profile.png'),
-  },
-  {
-    name: 'Fatima Zahra',
-    message: 'How are you today?',
-    image: require('../images/profile.png'),
-  },
-  {
-    name: 'Hassan Raza',
-    message: 'Let’s meet after Jummah.',
-    image: require('../images/profile.png'),
-  },
-  {
-    name: 'Muqsit',
-    message: 'Hope you’re doing well!',
-    image: require('../images/profile.png'),
-  },
-];
 
 const Main_screen = ({navigation}) => {
   const {t} = useTranslation();
-  // 2. Change state to hold dynamic users
   const [dynamicUsers, setDynamicUsers] = useState([]);
+  const [searchQuery, setSearchQuery] = useState(''); 
+  const [isSearching, setIsSearching] = useState(false); 
 
-  // Initialize services
   const db = getFirestore();
   const auth = getAuth();
 
   useEffect(() => {
-    const user = auth.currentUser; // No more brackets after auth
+    const backAction = () => {
+      if (isSearching) {
+        setIsSearching(false);
+        setSearchQuery(''); 
+        return true; 
+      }
+      return false; 
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction,
+    );
+
+    return () => backHandler.remove();
+  }, [isSearching]);
+
+  useEffect(() => {
+    const user = auth.currentUser;
     if (!user) return;
 
-    // 1. Define the path to your collection
     const contactsRef = collection(db, 'users', user.uid, 'contacts');
+    const q = query(contactsRef, orderBy('addedAt', 'desc'));
 
-    // 2. Create a query (e.g., ordering by date)
-    const q = query(contactsRef, orderBy('createdAt', 'desc'));
-
-    // 3. Set up the listener
     const unsubscribe = onSnapshot(
       q,
       querySnapshot => {
         const friends = [];
-        querySnapshot.forEach(documentSnapshot => {
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
           friends.push({
-            ...documentSnapshot.data(),
-            id: documentSnapshot.id, // q kai flatlist key extractor kay liay
-            image: require('../images/profile.png'),
+            ...data,
+            id: doc.id,
+            displayImage:
+              data.profilePic && data.profilePic !== ''
+                ? {uri: data.profilePic}
+                : require('../images/User_profile_icon.jpg'),
           });
         });
         setDynamicUsers(friends);
       },
       error => {
-        console.error('Snapshot error: ', error);
+        console.error('Error fetching contacts:', error);
       },
     );
 
-    return () => unsubscribe(); // which tells Firebase: "Hey, stop watching for changes now, the user has left this screen to avoid battery/data drain
+    return () => unsubscribe();
   }, []);
+
+  const handleLongPress = (contactId, contactName) => {
+    Alert.alert(
+      t('delete_chat'),
+      `${t('delete_chat_confirm', {name: contactName})}`,
+      [
+        {text: t('cancel'), style: 'cancel'},
+        {
+          text: t('delete'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const user = auth.currentUser;
+              
+              const sortedIds = [user.uid, contactId].sort();
+              const chatId = `${sortedIds[0]}_${sortedIds[1]}`;
+              
+              const messagesRef = collection(db, 'chats', chatId, 'messages');
+              const querySnapshot = await getDocs(messagesRef);
+              const batch = writeBatch(db);
+
+              querySnapshot.forEach((doc) => {
+                batch.delete(doc.ref);
+              });
+              await batch.commit();
+
+              await updateDoc(doc(db, 'users', user.uid, 'contacts', contactId), {
+                chatHidden: true,
+                lastMessage: '',
+              });
+
+              console.log('Chat messages deleted and contact hidden');
+            } catch (error) {
+              console.error('Error deleting chat messages:', error);
+              Alert.alert(t('permission_error'), t('firebase_rules_error'));
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Logic to filter users
+  const filteredUsers = dynamicUsers.filter(user => {
+    const matchesSearch = user.aliasName?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    if (isSearching && searchQuery.length > 0) {
+      // While searching: show users that match the text (including hidden ones so they can be found again)
+      return matchesSearch;
+    } else {
+      // Normal view: Only show active, non-hidden chats
+      return !user.chatHidden;
+    }
+  });
 
   return (
     <View style={styles.container}>
-      {/* Top Row with menu & search icons */}
       <View style={styles.topRow}>
         <TouchableOpacity onPress={() => navigation.openDrawer()}>
-          {/* <Image source={require('../images/menu.png')} /> */}
           <Icon name="menu" size={45} color="red" />
         </TouchableOpacity>
-        <TouchableOpacity>
+
+        {isSearching ? (
+          <TextInput
+            style={styles.searchInput}
+            placeholder={t('search_placeholder')}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+            onBlur={() => {
+              if (searchQuery === '') {
+                setIsSearching(false);
+                setSearchQuery('');
+              }
+            }}
+          />
+        ) : null}
+
+        <TouchableOpacity
+          onPress={() => {
+            if (isSearching) {
+              setSearchQuery('');
+            }
+            setIsSearching(!isSearching);
+          }}>
           <Image source={require('../images/Frame2.png')} />
         </TouchableOpacity>
       </View>
 
-      {/* Circle on the top right corner of screen */}
       <View style={styles.circle}></View>
 
-      {/* Chat text */}
       <View style={styles.chat_text_view}>
         <Text style={styles.chat_text}>{t('chat')}</Text>
       </View>
 
-      {/* User List */}
-      {/* 4. Update FlatList data */}
+      {/* CASE 1: User has NO contacts at all in Database */}
       {dynamicUsers.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
@@ -118,34 +193,68 @@ const Main_screen = ({navigation}) => {
             style={styles.lottieStyle}
           />
           <Text style={styles.emptyText}>
-            {t('connect_friends')}{'\n'}
+            {t('connect_friends')}
+            {'\n'}
             <Text style={styles.subText}>{t('hit_add_button')}</Text>
           </Text>
         </View>
+      ) : /* CASE 2: User is searching but typed something that doesn't exist */
+      isSearching && searchQuery.length > 0 && filteredUsers.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>{t('no_contact_found')}</Text>
+          <LottieView
+            source={require('../assets/animations/no_contact_found.json')}
+            autoPlay
+            loop
+            style={[styles.lottieStyle, {width: 250, height: 250}]}
+          />
+        </View>
+      ) : /* CASE 3: User has contacts but ALL of them are hidden (deleted chats) */
+      !isSearching && filteredUsers.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <LottieView
+            source={require('../assets/animations/no_active_list.json')}
+            autoPlay
+            loop
+            style={styles.lottieStyle}
+          />
+          <Text style={styles.emptyText}>
+            {t('no_active_chats')}
+            {'\n'}
+            <Text style={styles.subText}>{t('start_conversation_hint')}</Text>
+          </Text>
+        </View>
       ) : (
+        /* CASE 4: The actual List */
         <FlatList
-          data={dynamicUsers}
+          data={filteredUsers}
           keyExtractor={item => item.id}
           contentContainerStyle={{paddingHorizontal: '8%', paddingTop: '10%'}}
           renderItem={({item}) => (
             <TouchableOpacity
               style={styles.flatlist_container}
-              onPress={() =>
+              onLongPress={() => handleLongPress(item.id, item.aliasName)}
+              onPress={async () => {
+                if (item.chatHidden) {
+                    const user = auth.currentUser;
+                    await updateDoc(doc(db, 'users', user.uid, 'contacts', item.id), {
+                        chatHidden: false,
+                    });
+                }
                 navigation.navigate('Chat', {
-                  friendId: item.id,
-                  friendName: item.name,
+                  friendId: item.friendId,
+                  friendName: item.aliasName,
                 })
-              }>
-              <Image source={item.image} style={styles.profileImage} />
+              }}>
+              <Image source={item.displayImage} style={styles.profileImage} />
               <View style={styles.chatContent}>
-                <Text style={styles.userName}>{item.name}</Text>
-                <Text style={styles.userMessage}>{item.mobile}</Text>
+                <Text style={styles.userName}>{item.aliasName}</Text>
+                <Text style={styles.userMessage}>{item.email}</Text>
               </View>
             </TouchableOpacity>
           )}
         />
       )}
-      {/* Floating Add Contact Button */}
       <TouchableOpacity
         style={styles.floatingButton}
         onPress={() => navigation.navigate('Add_Contact')}>
@@ -171,6 +280,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginTop: StatusBar.currentHeight,
     zIndex: 1,
+  },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: '#F0F0F0',
+    borderRadius: 10,
+    marginHorizontal: 10,
+    paddingHorizontal: 15,
+    color: 'black',
   },
   circle: {
     width: '70%',
@@ -220,22 +338,20 @@ const styles = StyleSheet.create({
   },
   floatingButton: {
     position: 'absolute',
-    bottom: 100, // Adjust based on your tab bar height
+    bottom: 100,
     right: 25,
     borderRadius: 9999,
     elevation: 3,
     zIndex: 999,
   },
-
   floatingIcon: {
     width: 60,
     height: 60,
   },
   emptyContainer: {
-    // flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: '15%', // Adjust based on your "Chat" header height
+    marginTop: '15%',
   },
   lottieStyle: {
     width: 200,
@@ -247,7 +363,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Milonga-Regular',
     textAlign: 'center',
     marginTop: 10,
-    lineHeight: 30, // 👈 Add this. Adjust the number until the gap looks right.
+    lineHeight: 30,
   },
   subText: {
     fontSize: 17,

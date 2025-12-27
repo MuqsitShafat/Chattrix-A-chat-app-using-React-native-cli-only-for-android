@@ -55,5 +55,14 @@
   "connect_friends": "Let’s connect with your friends",
   "hit_add_button": "Tap the add button",
   "user": "User",
-    "about_app_screen": "Chattrix is a modern communication app that lets you connect with friends easily. Sign in securely using Google, Facebook, or your mobile number. Chat instantly, make voice calls, and stay connected anytime, anywhere. Chattrix is built to make conversations simple, fast, and reliable."
+  "delete_chat": "Delete Chat",
+  "delete_chat_confirm": "Are you sure you want to delete all messages and the chat with {{name}}?",
+  "delete": "Delete",
+  "permission_error": "Permission Error",
+  "firebase_rules_error": "Please update your Firebase Rules.",
+  "search_placeholder": "Search...",
+  "no_contact_found": "No contact found",
+  "no_active_chats": "No active chats",
+  "start_conversation_hint": "Search or add a friend to start a conversation" ,
+  "about_app_screen": "Chattrix is a modern communication app that lets you connect with friends easily. Sign in securely using Google, Facebook, or your mobile number. Chat instantly, make voice calls, and stay connected anytime, anywhere. Chattrix is built to make conversations simple, fast, and reliable."
 }
