@@ -7,16 +7,46 @@ import {
   StatusBar,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import { useTranslation } from 'react-i18next';
+// Modular Firebase Imports
+import { getAuth } from '@react-native-firebase/auth';
+import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, writeBatch } from '@react-native-firebase/firestore';
+import storage from '@react-native-firebase/storage';
+import { launchImageLibrary } from 'react-native-image-picker';
 
 const EditProfile_screen = ({navigation}) => {
  const {t} = useTranslation();
   const [newName, setNewName] = useState('');
+  const [currentName, setCurrentName] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const auth = getAuth();
+  const db = getFirestore();
+  const user = auth.currentUser;
+
+  useEffect(() => {
+    fetchUserData();
+  }, []);
+
+  const fetchUserData = async () => {
+    if (user) {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        setCurrentName(userDoc.data().name || userDoc.data().displayName || '');
+      }
+    }
+  };
 
   const confirmChanges = () => {
+    if (!newName.trim()) {
+      Alert.alert('Error', 'Please enter a new name');
+      return;
+    }
+
     Alert.alert(
       'Confirm Changes',
       'Are you sure you want to save these changes?',
@@ -28,8 +58,24 @@ const EditProfile_screen = ({navigation}) => {
         },
         {
           text: 'Save',
-          onPress: () => console.log('Save Pressed'),
-          // logic comes when Save is pressed and changes are saved
+          onPress: async () => {
+            setLoading(true);
+            try {
+              // Only update the user's own profile name
+              await updateDoc(doc(db, 'users', user.uid), {
+                name: newName,
+              });
+
+              setCurrentName(newName);
+              setNewName('');
+              Alert.alert('Success', 'Profile name updated');
+            } catch (error) {
+              console.error(error);
+              Alert.alert('Error', 'Failed to update name');
+            } finally {
+              setLoading(false);
+            }
+          },
         },
       ],
       {
@@ -38,9 +84,57 @@ const EditProfile_screen = ({navigation}) => {
     );
   };
 
-  const addNewPicture = () => {
-    // Logic to add new picture comes here
-    console.log('Add new picture pressed');
+  const addNewPicture = async () => {
+    const options = {
+      mediaType: 'photo',
+      quality: 1, 
+    };
+
+    launchImageLibrary(options, async (response) => {
+      if (response.didCancel) return;
+      if (response.errorCode) {
+        Alert.alert('Error', response.errorMessage);
+        return;
+      }
+
+      const source = response.assets[0].uri;
+      setLoading(true);
+
+      try {
+        // 1. Upload to Firebase Storage
+        const reference = storage().ref(`profile_pics/${user.uid}.jpg`);
+        await reference.putFile(source);
+        const url = await reference.getDownloadURL();
+
+        // 2. Update Current User's Document
+        await updateDoc(doc(db, 'users', user.uid), {
+          profilePic: url,
+        });
+
+        // 3. GLOBAL UPDATE for Image only: Update profilePic in everyone's contact list
+        const batch = writeBatch(db);
+        const allUsersSnapshot = await getDocs(collection(db, 'users'));
+
+        for (const userDoc of allUsersSnapshot.docs) {
+          // Check the 'contacts' sub-collection of every user to see if the current user is in it
+          const contactRef = doc(db, 'users', userDoc.id, 'contacts', user.uid);
+          const contactSnap = await getDoc(contactRef);
+          
+          if (contactSnap.exists()) {
+            // We ONLY update profilePic, leaving aliasName untouched
+            batch.update(contactRef, { profilePic: url });
+          }
+        }
+
+        await batch.commit();
+        Alert.alert('Success', 'Profile picture updated for everyone!');
+      } catch (error) {
+        console.error(error);
+        Alert.alert('Error', 'Failed to upload image');
+      } finally {
+        setLoading(false);
+      }
+    });
   };
 
   const goBack = () => {
@@ -66,7 +160,11 @@ const EditProfile_screen = ({navigation}) => {
 
       {/* Edit Details Section */}
       <View style={styles.editDetailsContainer}>
-        <Text style={styles.editDetailsText}>{t('edit_details_here')}</Text>
+        {loading ? (
+          <ActivityIndicator size="large" color="white" />
+        ) : (
+          <Text style={styles.editDetailsText}>{t('edit_details_here')}</Text>
+        )}
       </View>
 
       {/* Add New Picture Section */}
@@ -75,14 +173,14 @@ const EditProfile_screen = ({navigation}) => {
 
       </View>
       <View style={styles.addPictureSection}>
-        <TouchableOpacity style={styles.addPictureButton} onPress={addNewPicture}>
+        <TouchableOpacity style={styles.addPictureButton} onPress={addNewPicture} disabled={loading}>
           <Icon name="add" size={25} color="black" />
         </TouchableOpacity>
       </View>
 
       {/* Name Input Section */}
       <View style={styles.nameSection}>
-        <Text style={styles.nameLabel}>{t('name')}: <Text style={[styles.nameLabel,{fontFamily:'Poppins-Regular'}]}>Muqsit Shafat Hussain</Text></Text>
+        <Text style={styles.nameLabel}>{t('name')}: <Text style={[styles.nameLabel,{fontFamily:'Poppins-Regular'}]}>{currentName}</Text></Text>
         <View style={styles.newNameContainer}>
           <Text style={styles.newNameLabel}>{t('new_name')}: </Text>
           <TextInput
@@ -97,7 +195,7 @@ const EditProfile_screen = ({navigation}) => {
 
       {/* Confirm Changes Button */}
       <View style={styles.confirmSection}>
-        <TouchableOpacity style={styles.confirmButton} onPress={confirmChanges}>
+        <TouchableOpacity style={styles.confirmButton} onPress={confirmChanges} disabled={loading}>
           <Text style={styles.confirmButtonText}>{t('confirm_changes')}</Text>
         </TouchableOpacity>
       </View>

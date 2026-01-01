@@ -7,7 +7,7 @@ import {
   Dimensions,
   TouchableOpacity,
 } from 'react-native';
-import React from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   DrawerContentScrollView,
   DrawerItemList,
@@ -15,25 +15,52 @@ import {
 import {useTranslation} from 'react-i18next';
 // ADDED: Modular Firebase Auth import
 import {getAuth} from '@react-native-firebase/auth';
+// ADDED: Modular Firebase Firestore imports for real-time name updates
+import {getFirestore, doc, onSnapshot} from '@react-native-firebase/firestore';
 
 const {width, height} = Dimensions.get('screen');
 
 const Custom_Drawer = props => {
   const {t} = useTranslation();
 
-  // ADDED: Fetching real-time user data from Firebase
+  // CHANGED: Use local state to track the user so the UI re-renders on changes
   const auth = getAuth();
-  const user = auth.currentUser;
+  const db = getFirestore();
+  const [user, setUser] = useState(auth.currentUser);
+  const [userData, setUserData] = useState(null);
+
+  useEffect(() => {
+    // 🔑 ADDED: Listener to detect profile updates (name/photo) instantly
+    const unsubscribeAuth = auth.onUserChanged(newUser => {
+      setUser(newUser);
+    });
+
+    // 🔑 ADDED: Firestore listener to sync name changes from database instantly
+    let unsubscribeFirestore = () => {};
+    if (auth.currentUser) {
+      unsubscribeFirestore = onSnapshot(doc(db, 'users', auth.currentUser.uid), (snapshot) => {
+        if (snapshot.exists()) {
+          setUserData(snapshot.data());
+        }
+      });
+    }
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeFirestore();
+    };
+  }, []);
 
   // Logic for Dynamic Data:
   // 1. Name: Uses Google/FB name. If null, uses localized 'user' instead of hardcoded 'george'
-  const userName = user?.displayName || t('user');
+  // FIX: Prioritize Firestore data for instant name updates
+  const userName = userData?.name || user?.displayName || t('user');
 
   // 2. Identifier: Uses Email (Google/FB) or Phone Number
   const userIdentifier = user?.email || user?.phoneNumber || 'NA';
 
   // FIX: Request a higher resolution image from Google/FB
-  let photoUrl = user?.photoURL;
+  let photoUrl = userData?.profilePic || user?.photoURL;
   if (photoUrl && photoUrl.includes('googleusercontent.com')) {
     // Replaces the small 's96-c' with a larger 's400-c'
     photoUrl = photoUrl.replace('s96-c', 's400-c');
@@ -103,14 +130,17 @@ const Custom_Drawer = props => {
           if (route.name === 'Tabs') return null;
           const focused = index === props.state.index;
           return (
-            <DrawerItem
+            <TouchableOpacity
               key={route.key}
-              label={
-                props.descriptors[route.key].options.drawerLabel || route.name
-              }
-              focused={focused}
               onPress={() => props.navigation.navigate(route.name)}
-            />
+              style={[
+                styles.customDrawerItem,
+                focused && {backgroundColor: 'rgba(255,255,255,0.1)'},
+              ]}>
+              <Text style={styles.drawerItemLabel}>
+                {props.descriptors[route.key].options.drawerLabel || route.name}
+              </Text>
+            </TouchableOpacity>
           );
         })}
 

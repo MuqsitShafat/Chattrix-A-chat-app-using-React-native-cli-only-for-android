@@ -2,7 +2,7 @@ import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React, {useEffect} from 'react';
 
 // ✅ Added Firestore imports
-import { getFirestore, doc, setDoc } from '@react-native-firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc } from '@react-native-firebase/firestore';
 
 // ✅ Google Sign-In & Firebase Auth
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
@@ -15,22 +15,41 @@ import {
 import {LoginManager, AccessToken} from 'react-native-fbsdk-next';
 
 // 2. DATABASE SYNC LOGIC: This ensures that when an existing user signs back in,
-// their searchable profile in Firestore is updated (e.g., if they changed their Google photo).
+// their searchable profile in Firestore is updated without losing custom changes.
 async function saveUserToFirestore(user) {
   try {
     const db = getFirestore();
     const userRef = doc(db, 'users', user.uid);
-    await setDoc(userRef, {
-      uid: user.uid,
-      email: user.email.toLowerCase(),
-      name: user.displayName || 'Chattrix User',
-      profilePic: user.photoURL || '',
-    }, { merge: true });
+    
+    // Check if user already exists to protect custom name and photo
+    const userSnap = await getDoc(userRef);
+
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      
+      // PROTECTION LOGIC:
+      // We check if "userData.name" or "userData.profilePic" already exist.
+      // If they do, we keep the existing ones (custom).
+      // If they are empty, we fall back to Google/Facebook data.
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email.toLowerCase(),
+        name: userData.name || user.displayName || 'Chattrix User',
+        profilePic: userData.profilePic || user.photoURL || '',
+      }, { merge: true });
+    } else {
+      // New User: Save name and photo for the very first time
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email.toLowerCase(),
+        name: user.displayName || 'Chattrix User',
+        profilePic: user.photoURL || '',
+      }, { merge: true });
+    }
   } catch (error) {
     console.error('Firestore Sync Error:', error);
   }
 }
-
 //? Google Sign-In function
 async function onGoogleButtonPress() {
   try {
