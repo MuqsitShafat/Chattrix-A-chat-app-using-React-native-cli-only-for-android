@@ -28,12 +28,9 @@ async function saveUserToFirestore(user) {
       const userData = userSnap.data();
       
       // PROTECTION LOGIC:
-      // We check if "userData.name" or "userData.profilePic" already exist.
-      // If they do, we keep the existing ones (custom).
-      // If they are empty, we fall back to Google/Facebook data.
       await setDoc(userRef, {
         uid: user.uid,
-        email: user.email.toLowerCase(),
+        email: user.email ? user.email.toLowerCase() : '',
         name: userData.name || user.displayName || 'Chattrix User',
         profilePic: userData.profilePic || user.photoURL || '',
       }, { merge: true });
@@ -41,7 +38,7 @@ async function saveUserToFirestore(user) {
       // New User: Save name and photo for the very first time
       await setDoc(userRef, {
         uid: user.uid,
-        email: user.email.toLowerCase(),
+        email: user.email ? user.email.toLowerCase() : '',
         name: user.displayName || 'Chattrix User',
         profilePic: user.photoURL || '',
       }, { merge: true });
@@ -50,6 +47,7 @@ async function saveUserToFirestore(user) {
     console.error('Firestore Sync Error:', error);
   }
 }
+
 //? Google Sign-In function
 async function onGoogleButtonPress() {
   try {
@@ -156,7 +154,10 @@ const Signin = ({navigation}) => {
 
       {/* Phone Sign-In */}
       <View style={styles.button_phone_container}>
-        <TouchableOpacity style={styles.button_phone}>
+        <TouchableOpacity 
+          style={styles.button_phone}
+          onPress={() => navigation.navigate('Otp_screen')}
+        >
           <Text style={styles.button_phone_text}>
             Sign in with phone number
           </Text>
