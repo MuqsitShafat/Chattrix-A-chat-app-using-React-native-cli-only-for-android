@@ -23,8 +23,9 @@ import {
   getDocs,
 } from '@react-native-firebase/firestore';
 
-const Otp_screen = () => {
+const Otp_screen = ({navigation, route}) => {
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [name, setName] = useState(''); // ✅ Added state for Name
   const [code, setCode] = useState('');
   const [isValid, setIsValid] = useState(false);
   const [confirmation, setconfirmation] = useState(null);
@@ -32,6 +33,9 @@ const Otp_screen = () => {
   const [timer, setTimer] = useState(0);
   const phoneInputRef = useRef(null);
   const otpInputRef = useRef(null); // ✅ Ref to control hidden input focus
+
+  // ✅ Check if we are in Signup mode
+  const isSignup = route.params?.from === 'Signup';
 
   // ✅ FUNCTION TO CHECK IF PHONE NUMBER EXISTS IN FIRESTORE
   const checkIfUserExists = async formattedNumber => {
@@ -51,6 +55,11 @@ const Otp_screen = () => {
   const handleConfirmPress = async () => {
     if (!phoneInputRef.current || loading) return; // ✅ Prevent multiple clicks
 
+    // ✅ Validation: If Signup, Name is required
+    if (isSignup && name.trim().length < 2) {
+      return Alert.alert('Missing Info', 'Please enter your name to register.');
+    }
+
     const formatted = phoneNumber;
     const validLocal = phoneInputRef.current.isValidNumber(formatted);
     setIsValid(validLocal);
@@ -65,15 +74,27 @@ const Otp_screen = () => {
     setLoading(true); // ✅ Disable button and start loading
 
     try {
-      // ✅ 1. Check if user exists in Firestore first (Ethical logic check)
+      // ✅ 1. Check user existence logic
       const exists = await checkIfUserExists(formatted);
 
-      if (!exists) {
-        setLoading(false); // ✅ Re-enable on failure
-        return Alert.alert(
-          'Account Not Found',
-          'This phone number is not registered. Please go to the Sign Up screen to create an account.',
-        );
+      if (!isSignup) {
+        // FLOW: LOGIN -> User MUST exist
+        if (!exists) {
+          setLoading(false);
+          return Alert.alert(
+            'Account Not Found',
+            'This phone number is not registered. Please go to the Sign Up screen.',
+          );
+        }
+      } else {
+        //!< FLOW: SIGNUP -> User MUST NOT exist (Prevents overwriting names)
+        if (exists) {
+          setLoading(false);
+          return Alert.alert(
+            'Account Exists',
+            'This phone number is already registered. Please go to the Login screen to sign in.',
+          );
+        }
       }
 
       // ✅ 2. Call AbstractAPI to check phone validity
@@ -126,7 +147,19 @@ const Otp_screen = () => {
     try {
       const userCredential = await confirmation.confirm(code);
       console.log('✅ User signed in successfully!');
-      // Note: We don't need to 'save' the user here because they already exist in this flow.
+
+      // ✅ Registration Step: If user is new (Signup flow), save to Firestore
+      if (isSignup) {
+        const user = userCredential.user;
+        const db = getFirestore();
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name: name,
+          phoneNumber: phoneNumber,
+          createdAt: new Date().toISOString(),
+        });
+        console.log('✅ New user registered in Firestore');
+      }
     } catch (error) {
       console.log('❌ Invalid code:', error);
       Alert.alert('Error', 'The code entered is incorrect.');
@@ -163,13 +196,31 @@ const Otp_screen = () => {
           style={styles.image}
           source={require('../images/emojicropped.png')}
         />
-        <TouchableOpacity style={styles.back_arrow}>
+        <TouchableOpacity
+          style={styles.back_arrow}
+          onPress={() => navigation.goBack()}>
           <Image source={require('../images/Frame.png')} style={styles.icon} />
         </TouchableOpacity>
       </View>
 
       {!confirmation ? (
         <>
+          {/* ✅ Name input (Only shown during Signup) */}
+          {isSignup && (
+            <View style={[styles.phone_input_container, {marginBottom: 15}]}>
+              <TextInput
+                placeholder="Enter Your Name"
+                placeholderTextColor="#ddd"
+                style={[
+                  styles.phoneContainer,
+                  {height: 50, paddingHorizontal: 20, color: 'white'},
+                ]}
+                onChangeText={setName}
+                value={name}
+              />
+            </View>
+          )}
+
           {/* Phone input */}
           <View style={styles.phone_input_container}>
             <PhoneInput
@@ -220,11 +271,11 @@ const Otp_screen = () => {
           {/* OTP input section styled like Figma */}
           <View style={styles.figma_otp_container}>
             <Text style={styles.chattrix_title}>Chattrix</Text>
-            
+
             {/* ✅ TouchableOpacity to refocus keyboard on tap */}
-            <TouchableOpacity 
-              activeOpacity={1} 
-              onPress={handleOtpBoxPress} 
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={handleOtpBoxPress}
               style={styles.otp_boxes_row}>
               {[0, 1, 2, 3, 4, 5].map(idx => (
                 <View key={idx} style={styles.otp_box}>

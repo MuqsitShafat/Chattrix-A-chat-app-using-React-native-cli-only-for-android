@@ -34,7 +34,7 @@ const ContactInfo_screen = ({ navigation }) => {
 
 const confirmChanges = async () => {
   if (name.trim() === '' || identifier.trim() === '') {
-    Alert.alert('Error', 'Please enter both an Alias Name and their username or email.');
+    Alert.alert('Error', 'Please enter both an Alias Name and their identifier.');
     return;
   }
 
@@ -45,22 +45,43 @@ const confirmChanges = async () => {
 
     if (!currentUser) return;
 
-    if (identifier.toLowerCase() === currentUser.email?.toLowerCase()) {
+    // Normalizing logic for Phone Numbers (Converts 03... to +923...)
+    let searchIdentifier = identifier.trim();
+    if (searchIdentifier.startsWith('0')) {
+      searchIdentifier = '+92' + searchIdentifier.substring(1);
+    }
+
+    if (searchIdentifier.toLowerCase() === currentUser.email?.toLowerCase() || 
+        searchIdentifier === currentUser.phoneNumber) {
       Alert.alert('Error', 'You cannot add yourself as a contact.');
       return;
     }
 
-    // 1. SEARCH: Does this user exist in Chattrix?
+    // 1. SEARCH: Check both Email AND PhoneNumber fields
     const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('email', '==', identifier.toLowerCase()));
-    const querySnapshot = await getDocs(q);
+    
+    // Check Email
+    const emailQuery = query(usersRef, where('email', '==', searchIdentifier.toLowerCase()));
+    // Check PhoneNumber
+    const phoneQuery = query(usersRef, where('phoneNumber', '==', searchIdentifier));
 
-    if (querySnapshot.empty) {
-      Alert.alert('Not Found', 'This user is not registered on Chattrix.');
+    const [emailSnap, phoneSnap] = await Promise.all([
+      getDocs(emailQuery),
+      getDocs(phoneQuery)
+    ]);
+
+    let friendDoc = null;
+    if (!emailSnap.empty) {
+      friendDoc = emailSnap.docs[0];
+    } else if (!phoneSnap.empty) {
+      friendDoc = phoneSnap.docs[0];
+    }
+
+    if (!friendDoc) {
+      Alert.alert('Not Found', 'This user (Email or Phone) is not registered on Chattrix.');
       return;
     }
 
-    const friendDoc = querySnapshot.docs[0];
     const friendData = friendDoc.data();
     const friendId = friendDoc.id;
 
@@ -69,20 +90,20 @@ const confirmChanges = async () => {
     const checkSnapshot = await getDoc(myContactDocRef);
 
     if (checkSnapshot.exists()) {
-      // Logic: If the document exists, they are already added!
       Alert.alert(
         'Already Added', 
         `${friendData.name || 'This user'} is already in your chat list.`
       );
-      return; // Stop the code here
+      return;
     }
 
-    // 3. SAVE: Only runs if the check above was false
+    // 3. SAVE: Works for both Email and Phone users
     await setDoc(myContactDocRef, {
       aliasName: name,
       originalName: friendData.name || 'Chattrix User',
       friendId: friendId,
-      email: friendData.email,
+      email: friendData.email || '', 
+      phoneNumber: friendData.phoneNumber || '',
       profilePic: friendData.profilePic || '', 
       addedAt: serverTimestamp(),
     });

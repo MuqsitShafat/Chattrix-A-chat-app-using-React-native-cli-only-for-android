@@ -2,26 +2,65 @@ import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React from 'react';
 
 // ✅ Added Firestore imports for registering users
-import { getFirestore, doc, setDoc } from '@react-native-firebase/firestore';
-import { getAuth } from '@react-native-firebase/auth';
+import {getFirestore, doc, setDoc} from '@react-native-firebase/firestore';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  FacebookAuthProvider,
+  signInWithCredential,
+} from '@react-native-firebase/auth';
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
+import {LoginManager, AccessToken} from 'react-native-fbsdk-next';
 
 const Signup = ({navigation}) => {
-
   //! 1. DATABASE SYNC LOGIC: This function saves the authenticated user to the 'users' collection
   //! so that other people can search for them via email and add them as contacts.
-  const saveUserToFirestore = async (user) => {
+  const saveUserToFirestore = async user => {
     try {
       const db = getFirestore();
       const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
-        uid: user.uid,
-        email: user.email.toLowerCase(), //* Saved in lowercase for reliable searching
-        name: user.displayName || 'Chattrix User',
-        profilePic: user.photoURL || '',
-      }, { merge: true }); //* 'merge: true' ensures we don't overwrite their existing friend lists/data
+      await setDoc(
+        userRef,
+        {
+          uid: user.uid,
+          email: user.email ? user.email.toLowerCase() : '', //* Saved in lowercase for reliable searching
+          name: user.displayName || 'Chattrix User',
+          profilePic: user.photoURL || '',
+        },
+        {merge: true},
+      ); //* 'merge: true' ensures we don't overwrite their existing friend lists/data
       console.log('User successfully registered in Firestore');
     } catch (error) {
       console.error('Error saving user to Firestore:', error);
+    }
+  };
+
+  // Helper for Google Signup
+  const onGoogleButtonPress = async () => {
+    try {
+      await GoogleSignin.hasPlayServices();
+      const signInResult = await GoogleSignin.signIn();
+      const idToken = signInResult.data?.idToken || signInResult.idToken;
+      const googleCredential = GoogleAuthProvider.credential(idToken);
+      return await signInWithCredential(getAuth(), googleCredential);
+    } catch (error) {
+      console.error('Google Signup Error:', error);
+    }
+  };
+
+  // Helper for Facebook Signup
+  const onFacebookButtonPress = async () => {
+    try {
+      const result = await LoginManager.logInWithPermissions([
+        'public_profile',
+        'email',
+      ]);
+      if (result.isCancelled) return null;
+      const data = await AccessToken.getCurrentAccessToken();
+      const credential = FacebookAuthProvider.credential(data.accessToken);
+      return await signInWithCredential(getAuth(), credential);
+    } catch (error) {
+      console.error('Facebook Signup Error:', error);
     }
   };
 
@@ -41,28 +80,26 @@ const Signup = ({navigation}) => {
 
       {/* Buttons */}
       <View style={styles.buttons_container}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.button}
-          onPress={() => 
-            onGoogleButtonPress().then((userCredential) => {
+          onPress={() =>
+            onGoogleButtonPress().then(userCredential => {
               if (userCredential) saveUserToFirestore(userCredential.user);
             })
-          }
-        >
+          }>
           <Image
             source={require('../images/iconGoogle.png')}
             style={styles.icon}
           />
           <Text style={styles.buttons_text}>Continue with Google</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.button}
-          onPress={() => 
-            onFacebookButtonPress().then((userCredential) => {
+          onPress={() =>
+            onFacebookButtonPress().then(userCredential => {
               if (userCredential) saveUserToFirestore(userCredential.user);
             })
-          }
-        >
+          }>
           <Image
             source={require('../images/Facebook.png')}
             style={styles.icon}
@@ -80,8 +117,9 @@ const Signup = ({navigation}) => {
 
       {/* Continue with phone no. button */}
       <View style={styles.button_phone_container}>
-        <TouchableOpacity style={styles.button_phone}   onPress={() => navigation.navigate('Otp_screen')} 
-         >
+        <TouchableOpacity
+          style={styles.button_phone} // Signup.jsx
+          onPress={() => navigation.navigate('Otp_screen', {from: 'Signup'})}>
           <Text style={styles.button_phone_text}>
             Continue with phone number
           </Text>

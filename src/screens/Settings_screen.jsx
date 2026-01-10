@@ -10,138 +10,187 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
-// Modular API imports
-import { getAuth, signOut } from '@react-native-firebase/auth';
-// Fix: Use named import for GoogleSignin
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
-import { LoginManager } from 'react-native-fbsdk-next';
+import {useTranslation} from 'react-i18next';
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
+import {LoginManager} from 'react-native-fbsdk-next';
+import {getAuth, signOut, deleteUser} from '@react-native-firebase/auth';
+import {
+  getFirestore,
+  doc,
+  deleteDoc,
+  collection,
+  getDocs,
+  updateDoc, // Make sure this is added
+  serverTimestamp, // Make sure this is added
+} from '@react-native-firebase/firestore';
 
 const Settings_screen = ({navigation}) => {
- const { t } = useTranslation();
-const deleteAccount = () => {
-  Alert.alert(
-    'Delete Account', // Title
-    'Are you sure you want to delete your account?', // Message
-    [
-      {
-        text: 'Cancel',
-        onPress: () => console.log('Cancel Pressed'),
-        style: 'cancel',
-      },
-      {
-        text: 'OK',
-        onPress: () => console.log('OK Pressed'),
-        // logic comes when the OK button is pressed and acc is deleted
-      },
-    ],
-    {
-      cancelable: false,
-    },
-  );
-};
-const  ViewProfile = () => {
-  // Navigation to view profile comes here 
-  navigation.navigate('Profile')
-};
-const changePassword = () => {
-  Alert.alert(
-    'Change Password', // Title
-    'Are you sure you want to change your password?', // Message
-    [
-      {
-        text: 'No',
-        onPress: () => console.log('Cancel Pressed'),
-        style: 'cancel',
-      },
-      {
-        text: 'Yes',
-        onPress: () => {console.log('OK Pressed')
-          navigation.navigate('ChangePassword')
+  const {t} = useTranslation();
+  //! MOST IRRITATING BUG FIX below:
+  const deleteAccount = () => {
+    Alert.alert(
+      '⚠️ Delete Account Permanently',
+      'This action CANNOT be undone. You will lose all your chats, contacts, and profile data immediately. Are you absolutely sure?',
+      [
+        {
+          text: 'No, Keep My Account',
+          onPress: () => console.log('Deletion cancelled'),
+          style: 'cancel',
         },
-        // logic comes when yes is pressed and change password section is opened
-      },
-    ],
-    {
-      cancelable: false,
-    },
-  );
-};
-const privacySettings = () => {
-  // a navigation to privacy settings page will come here
- navigation.navigate('PrivacySettings')
-};
-const language = ()=>{
-  // a navigation to language settings page will come here
-  navigation.navigate('Language')
-
-}
-const logout=()=>{
-  Alert.alert(
-    'Logout', // Title
-    'Are you sure you want to logout?', // Message
-    
-    [
-      {
-        text: 'No',
-        onPress: () => console.log('Cancel Pressed'),
-        style: 'cancel',
-      },
-      {
-        text: 'Yes',
-        onPress: async () => {
-          console.log('OK Pressed');
-          // logic comes when yes is pressed and logout section is opened
-          try {
-            // 1. Firebase Sign Out (Modular API)
+        {
+          text: 'Yes, Delete Everything',
+          style: 'destructive',
+         onPress: async () => {
             const auth = getAuth();
-            await signOut(auth);
+            const user = auth.currentUser;
+            const db = getFirestore();
 
-            // 2. Google Sign Out (Named export fix)
-            // This ensures the account picker shows up next time
-            await GoogleSignin.signOut();
+            if (!user) {
+              Alert.alert('Error', 'No active user found.');
+              return;
+            }
 
-            // 3. Facebook Sign Out
-            LoginManager.logOut();
-            
-            console.log('Logout successful: Firebase, Google, and Facebook cleared.');
-            // navigation.replace('Login'); 
-          } catch (error) {
-            console.error('Logout Error:', error);
-            // We show an alert but often logout errors can be ignored 
-            // if the Firebase session is already dead.
-            Alert.alert('Error', 'Failed to log out. Please try again.');
-          }
+            try {
+              console.log('🔐 STEP 1: Challenging Session Freshness...');
+
+              // 1. Refresh token & check if session exists (Modular API)
+              const tokenResult = await user.getIdTokenResult(true); 
+              
+              // 2. THE MANUAL LOCK:
+              // Firebase Auth "recent login" window is strictly 5 minutes (300,000ms).
+              // We check if (Current Time - Auth Time) > 5 minutes.
+              const authTime = new Date(tokenResult.authTime).getTime();
+              const now = new Date().getTime();
+
+              if (now - authTime > 300000) {
+                // If the session is older than 5 mins, we STOP here.
+                // Nothing in Firestore is touched.
+                throw { code: 'auth/requires-recent-login' };
+              }
+
+              console.log('✅ Session is fresh. Proceeding with atomic wipe...');
+
+              // 3. Delete Sub-collection (contacts)
+              const contactsRef = collection(db, 'users', user.uid, 'contacts');
+              const contactsSnapshot = await getDocs(contactsRef);
+              const deletePromises = contactsSnapshot.docs.map(document =>
+                deleteDoc(document.ref),
+              );
+              await Promise.all(deletePromises);
+
+              // 4. Delete main User Document
+              const userDocRef = doc(db, 'users', user.uid);
+              await deleteDoc(userDocRef);
+
+              console.log('🔥 Database Vanished. Removing Auth Account...');
+
+              // 5. Clear Social Sessions
+              await GoogleSignin.signOut().catch(() => {});
+              LoginManager.logOut();
+
+              // 6. FINALLY Delete the Auth account
+              // Since our manual check in Step 2 passed, this is guaranteed to work.
+              await deleteUser(user);
+
+              Alert.alert('Success', 'Account completely removed.');
+            } catch (error) {
+              console.error('Deletion Error:', error);
+
+              if (error.code === 'auth/requires-recent-login') {
+                Alert.alert(
+                  'Security Re-Login Required',
+                  'For deletion, you just have to logout and log back in to delete your account. please log in again and try deleting your account, it will be deleted immediately.',
+                );
+              } else {
+                Alert.alert('Error', 'Failed to delete account.');
+              }
+            }
+          },
         },
-      },
-    ],
-    {
-      cancelable: true,
-    },
-  )
-}
+      ],
+      {cancelable: false},
+    );
+  };
+
+  const ViewProfile = () => {
+    navigation.navigate('Profile');
+  };
+
+  const changePassword = () => {
+    Alert.alert(
+      'Change Password',
+      'Are you sure you want to change your password?',
+      [
+        {
+          text: 'No',
+          onPress: () => console.log('Cancel Pressed'),
+          style: 'cancel',
+        },
+        {
+          text: 'Yes',
+          onPress: () => {
+            console.log('OK Pressed');
+            navigation.navigate('ChangePassword');
+          },
+        },
+      ],
+      {cancelable: false},
+    );
+  };
+
+  const privacySettings = () => {
+    navigation.navigate('PrivacySettings');
+  };
+
+  const language = () => {
+    navigation.navigate('Language');
+  };
+
+  const logout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'No',
+          onPress: () => console.log('Cancel Pressed'),
+          style: 'cancel',
+        },
+        {
+          text: 'Yes',
+          onPress: async () => {
+            console.log('OK Pressed');
+            try {
+              const auth = getAuth();
+              await signOut(auth);
+              await GoogleSignin.signOut();
+              LoginManager.logOut();
+              console.log('Logout successful.');
+            } catch (error) {
+              console.error('Logout Error:', error);
+              Alert.alert('Error', 'Failed to log out.');
+            }
+          },
+        },
+      ],
+      {cancelable: true},
+    );
+  };
+
   return (
     <View style={styles.container}>
-      {/* Top Row with menu & search icons */}
       <View style={styles.topRow}>
         <TouchableOpacity onPress={() => navigation.openDrawer()}>
-          {/* <Image source={require('../images/menu.png')} /> */}
           <Icon name="menu" size={45} color="red" />
         </TouchableOpacity>
         <TouchableOpacity>
           <Image source={require('../images/Frame2.png')} />
         </TouchableOpacity>
       </View>
-
-      {/* Circle on the top right corner of screen */}
       <View style={styles.circle}></View>
-
-      {/* Chat text */}
       <View style={styles.chat_text_view}>
         <Text style={styles.chat_text}>{t('settings')}</Text>
       </View>
-
-      {/* 6 Touchable buttons */}
       <ScrollView contentContainerStyle={styles.buttonContainer}>
         <TouchableOpacity style={styles.button} onPress={ViewProfile}>
           <Text style={styles.buttonText}>{t('view_profile')}</Text>
@@ -174,17 +223,13 @@ const logout=()=>{
           <Image style={styles.arrow} source={require('../images/Arrow.png')} />
         </TouchableOpacity>
       </ScrollView>
-
       <View style={styles.spacing}></View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
+  container: {flex: 1, backgroundColor: '#FFFFFF'},
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -202,10 +247,7 @@ const styles = StyleSheet.create({
     top: 0,
     right: 0,
   },
-  chat_text_view: {
-    marginTop: '28%',
-    marginLeft: '4%',
-  },
+  chat_text_view: {marginTop: '28%', marginLeft: '4%'},
   chat_text: {
     fontSize: 51,
     color: 'black',
@@ -234,20 +276,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: 'InriaSans-Regular',
   },
-  arrow: {
-    width: 25,
-    height: 25,
-  },
-  logoutRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  logoutArrow: {
-    marginLeft: 10,
-  },
-  spacing: {
-    marginTop: '18%',
-  },
+  arrow: {width: 25, height: 25},
+  logoutRow: {flexDirection: 'row', alignItems: 'center'},
+  logoutArrow: {marginLeft: 10},
+  spacing: {marginTop: '18%'},
 });
 
 export default Settings_screen;
