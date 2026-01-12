@@ -40,7 +40,7 @@ const Settings_screen = ({navigation}) => {
         {
           text: 'Yes, Delete Everything',
           style: 'destructive',
-         onPress: async () => {
+          onPress: async () => {
             const auth = getAuth();
             const user = auth.currentUser;
             const db = getFirestore();
@@ -54,8 +54,8 @@ const Settings_screen = ({navigation}) => {
               console.log('🔐 STEP 1: Challenging Session Freshness...');
 
               // 1. Refresh token & check if session exists (Modular API)
-              const tokenResult = await user.getIdTokenResult(true); 
-              
+              const tokenResult = await user.getIdTokenResult(true);
+
               // 2. THE MANUAL LOCK:
               // Firebase Auth "recent login" window is strictly 5 minutes (300,000ms).
               // We check if (Current Time - Auth Time) > 5 minutes.
@@ -65,10 +65,12 @@ const Settings_screen = ({navigation}) => {
               if (now - authTime > 300000) {
                 // If the session is older than 5 mins, we STOP here.
                 // Nothing in Firestore is touched.
-                throw { code: 'auth/requires-recent-login' };
+                throw {code: 'auth/requires-recent-login'};
               }
 
-              console.log('✅ Session is fresh. Proceeding with atomic wipe...');
+              console.log(
+                '✅ Session is fresh. Proceeding with atomic wipe...',
+              );
 
               // 3. Delete Sub-collection (contacts)
               const contactsRef = collection(db, 'users', user.uid, 'contacts');
@@ -162,6 +164,18 @@ const Settings_screen = ({navigation}) => {
             console.log('OK Pressed');
             try {
               const auth = getAuth();
+              const db = getFirestore();
+              const currentUser = auth.currentUser;
+
+              if (currentUser) {
+                const userRef = doc(db, 'users', currentUser.uid);
+                await updateDoc(userRef, {
+                  status: 'offline',
+                  lastSeen: serverTimestamp(),
+                });
+                console.log('User status set to offline in Firestore');
+              }
+
               await signOut(auth);
               await GoogleSignin.signOut();
               LoginManager.logOut();

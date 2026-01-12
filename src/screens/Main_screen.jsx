@@ -244,6 +244,7 @@ const Main_screen = ({navigation}) => {
                 navigation.navigate('Chat', {
                   friendId: item.friendId,
                   friendName: item.aliasName,
+                  profilePic: item.profilePic,
                 })
               }}>
               <Image source={item.displayImage} style={styles.profileImage} />

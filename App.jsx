@@ -1,9 +1,15 @@
 import './src/i18n/i18n';
 import React, {useEffect, useContext} from 'react';
+import {AppState} from 'react-native';
 import BootSplash from 'react-native-bootsplash';
-
-// ✅ Explicitly run Google Config so it can't be tree-shaken
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
+import  { getAuth } from '@react-native-firebase/auth';
+import {
+  getFirestore,
+  doc,
+  updateDoc,
+  serverTimestamp,
+} from '@react-native-firebase/firestore';
 
 import {
   NavigationContainer,
@@ -14,16 +20,13 @@ import {createDrawerNavigator} from '@react-navigation/drawer';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {Image} from 'react-native';
 
-// Screens & Navigators
 import Call_screen from './src/screens/Call_screen';
 import Home_Chat_navigator from './src/Navigation/Home_Chat_navigator';
 import SettingsNavigator from './src/Navigation/SettingsNavigation';
 import Custom_Drawer from './src/Navigation/Custom_Drawer';
 import AuthStack from './src/Navigation/AuthStack';
 
-// Auth Context
 import {AuthProvider, AuthContext} from './src/Auth/AuthContext';
-import Otp_screen from './src/screens/Otp_screen';
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
@@ -68,9 +71,7 @@ const TabNavigator = () => (
       component={Home_Chat_navigator}
       options={({route}) => {
         const routeName = getFocusedRouteNameFromRoute(route) ?? 'Home';
-        if (routeName === 'Chat') {
-          return {tabBarStyle: {display: 'none'}};
-        } else if (routeName === 'Add_Contact') {
+        if (routeName === 'Chat' || routeName === 'Add_Contact') {
           return {tabBarStyle: {display: 'none'}};
         }
         return {};
@@ -80,7 +81,7 @@ const TabNavigator = () => (
       name="Settings"
       component={SettingsNavigator}
       options={({route}) => ({
-        unmountOnBlur: true, // 🔑 ADD THIS: Resets the stack when you switch tabs
+        unmountOnBlur: true,
         tabBarStyle: (() => {
           const routeName = getFocusedRouteNameFromRoute(route) ?? 'Settings';
           if (
@@ -112,30 +113,75 @@ const TabNavigator = () => (
 
 const AppContent = () => {
   const {user, loading} = useContext(AuthContext);
+  const db = getFirestore();
 
-  // Configure Google Sign-In when app starts
+  useEffect(() => {
+    // This function handles the actual DB update
+    const updateStatus = async status => {
+      // 1. Get the very latest auth state directly from Firebase
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+
+      // 2. Only proceed if the user is actually logged in
+      if (currentUser?.uid) {
+        try {
+          const userRef = doc(db, 'users', currentUser.uid);
+          await updateDoc(userRef, {
+            status: status,
+            lastSeen: serverTimestamp(),
+          });
+          console.log(`Status updated to: ${status}`);
+        } catch (error) {
+          // This will now only catch REAL errors, not "logged out" errors
+          if (error.code !== 'firestore/permission-denied') {
+            console.error('Error updating status:', error);
+          }
+        }
+      }
+    };
+
+    // Set online when user logs in or app opens
+    if (user) {
+      updateStatus('online');
+    }
+
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (user) {
+        if (nextAppState === 'active') {
+          updateStatus('online');
+        } else {
+          // background or inactive
+          updateStatus('offline');
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      // Only try to set offline if we still have a user session
+      if (user) {
+        updateStatus('offline');
+      }
+    };
+  }, [user]); // Re-run when user changes
+
   useEffect(() => {
     GoogleSignin.configure({
       webClientId:
         '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
       offlineAccess: true,
     });
-    console.log('✅ Google Sign-In initialized');
   }, []);
 
-  // Hide BootSplash
   useEffect(() => {
-    const init = async () => {
-      // You can do any async pre-loading here if needed
-    };
+    const init = async () => {};
     init().finally(async () => {
       await BootSplash.hide({fade: true});
-      console.log('BootSplash hidden');
     });
   }, []);
 
   if (loading) {
-    return null; // or a custom Splash Screen
+    return null;
   }
 
   return (
