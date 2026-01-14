@@ -1,6 +1,4 @@
-// 1. Add imports
 import React, {useState, useEffect} from 'react';
-// New Modular way:
 import {
   getFirestore,
   collection,
@@ -10,8 +8,8 @@ import {
   orderBy,
   updateDoc,
   getDocs,
-  deleteDoc,
   writeBatch,
+  limit,
 } from '@react-native-firebase/firestore';
 import {getAuth} from '@react-native-firebase/auth';
 import {
@@ -33,8 +31,9 @@ import LottieView from 'lottie-react-native';
 const Main_screen = ({navigation}) => {
   const {t} = useTranslation();
   const [dynamicUsers, setDynamicUsers] = useState([]);
-  const [searchQuery, setSearchQuery] = useState(''); 
-  const [isSearching, setIsSearching] = useState(false); 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [lastMessages, setLastMessages] = useState({});
 
   const db = getFirestore();
   const auth = getAuth();
@@ -43,10 +42,10 @@ const Main_screen = ({navigation}) => {
     const backAction = () => {
       if (isSearching) {
         setIsSearching(false);
-        setSearchQuery(''); 
-        return true; 
+        setSearchQuery('');
+        return true;
       }
-      return false; 
+      return false;
     };
 
     const backHandler = BackHandler.addEventListener(
@@ -64,30 +63,57 @@ const Main_screen = ({navigation}) => {
     const contactsRef = collection(db, 'users', user.uid, 'contacts');
     const q = query(contactsRef, orderBy('addedAt', 'desc'));
 
-    const unsubscribe = onSnapshot(
-      q,
-      querySnapshot => {
-        const friends = [];
-        querySnapshot.forEach(doc => {
-          const data = doc.data();
-          friends.push({
-            ...data,
-            id: doc.id,
-            displayImage:
-              data.profilePic && data.profilePic !== ''
-                ? {uri: data.profilePic}
-                : require('../images/User_profile_icon.jpg'),
-          });
+    const unsubscribe = onSnapshot(q, querySnapshot => {
+      const friends = [];
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        friends.push({
+          ...data,
+          id: doc.id,
+          displayImage:
+            data.profilePic && data.profilePic !== ''
+              ? {uri: data.profilePic}
+              : require('../images/User_profile_icon.jpg'),
         });
-        setDynamicUsers(friends);
-      },
-      error => {
-        console.error('Error fetching contacts:', error);
-      },
-    );
+      });
+      setDynamicUsers(friends);
+    });
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user || dynamicUsers.length === 0) return;
+
+    const unsubscribes = dynamicUsers.map(friend => {
+      const chatId = [user.uid, friend.friendId].sort().join('_');
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
+      const q = query(messagesRef, orderBy('createdAt', 'desc'));
+
+      return onSnapshot(q, querySnapshot => {
+        const allMsgs = querySnapshot.docs.map(d => ({
+          ...d.data(),
+          id: d.id,
+        }));
+
+        const latestValidMsg = allMsgs.find(
+          msg => !msg.deletedBy || !msg.deletedBy.includes(user.uid),
+        );
+
+        setLastMessages(prev => ({
+          ...prev,
+          [friend.friendId]: latestValidMsg
+            ? latestValidMsg.text
+            : 'No messages yet. Say Hi! 👋',
+        }));
+      });
+    });
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+  }, [dynamicUsers]);
 
   const handleLongPress = (contactId, contactName) => {
     Alert.alert(
@@ -101,28 +127,35 @@ const Main_screen = ({navigation}) => {
           onPress: async () => {
             try {
               const user = auth.currentUser;
-              
               const sortedIds = [user.uid, contactId].sort();
               const chatId = `${sortedIds[0]}_${sortedIds[1]}`;
-              
               const messagesRef = collection(db, 'chats', chatId, 'messages');
               const querySnapshot = await getDocs(messagesRef);
               const batch = writeBatch(db);
 
-              querySnapshot.forEach((doc) => {
-                batch.delete(doc.ref);
+              querySnapshot.forEach(msgDoc => {
+                const data = msgDoc.data();
+                const docRef = msgDoc.ref;
+                if (data.deletedBy && data.deletedBy.includes(contactId)) {
+                  batch.delete(docRef);
+                } else {
+                  batch.update(docRef, {
+                    deletedBy: Array.isArray(data.deletedBy)
+                      ? [...data.deletedBy, user.uid]
+                      : [user.uid],
+                  });
+                }
               });
+
               await batch.commit();
-
-              await updateDoc(doc(db, 'users', user.uid, 'contacts', contactId), {
-                chatHidden: true,
-                lastMessage: '',
-              });
-
-              console.log('Chat messages deleted and contact hidden');
+              await updateDoc(
+                doc(db, 'users', user.uid, 'contacts', contactId),
+                {
+                  chatHidden: true,
+                },
+              );
             } catch (error) {
-              console.error('Error deleting chat messages:', error);
-              Alert.alert(t('permission_error'), t('firebase_rules_error'));
+              console.error('Error deleting chat:', error);
             }
           },
         },
@@ -130,15 +163,13 @@ const Main_screen = ({navigation}) => {
     );
   };
 
-  // Logic to filter users
   const filteredUsers = dynamicUsers.filter(user => {
-    const matchesSearch = user.aliasName?.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const matchesSearch = user.aliasName
+      ?.toLowerCase()
+      .includes(searchQuery.toLowerCase());
     if (isSearching && searchQuery.length > 0) {
-      // While searching: show users that match the text (including hidden ones so they can be found again)
       return matchesSearch;
     } else {
-      // Normal view: Only show active, non-hidden chats
       return !user.chatHidden;
     }
   });
@@ -183,7 +214,6 @@ const Main_screen = ({navigation}) => {
         <Text style={styles.chat_text}>{t('chat')}</Text>
       </View>
 
-      {/* CASE 1: User has NO contacts at all in Database */}
       {dynamicUsers.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
@@ -198,8 +228,9 @@ const Main_screen = ({navigation}) => {
             <Text style={styles.subText}>{t('hit_add_button')}</Text>
           </Text>
         </View>
-      ) : /* CASE 2: User is searching but typed something that doesn't exist */
-      isSearching && searchQuery.length > 0 && filteredUsers.length === 0 ? (
+      ) : isSearching &&
+        searchQuery.length > 0 &&
+        filteredUsers.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>{t('no_contact_found')}</Text>
           <LottieView
@@ -209,8 +240,7 @@ const Main_screen = ({navigation}) => {
             style={[styles.lottieStyle, {width: 250, height: 250}]}
           />
         </View>
-      ) : /* CASE 3: User has contacts but ALL of them are hidden (deleted chats) */
-      !isSearching && filteredUsers.length === 0 ? (
+      ) : !isSearching && filteredUsers.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
             source={require('../assets/animations/no_active_list.json')}
@@ -225,7 +255,6 @@ const Main_screen = ({navigation}) => {
           </Text>
         </View>
       ) : (
-        /* CASE 4: The actual List */
         <FlatList
           data={filteredUsers}
           keyExtractor={item => item.id}
@@ -236,21 +265,26 @@ const Main_screen = ({navigation}) => {
               onLongPress={() => handleLongPress(item.id, item.aliasName)}
               onPress={async () => {
                 if (item.chatHidden) {
-                    const user = auth.currentUser;
-                    await updateDoc(doc(db, 'users', user.uid, 'contacts', item.id), {
-                        chatHidden: false,
-                    });
+                  const user = auth.currentUser;
+                  await updateDoc(
+                    doc(db, 'users', user.uid, 'contacts', item.id),
+                    {
+                      chatHidden: false,
+                    },
+                  );
                 }
                 navigation.navigate('Chat', {
                   friendId: item.friendId,
                   friendName: item.aliasName,
                   profilePic: item.profilePic,
-                })
+                });
               }}>
               <Image source={item.displayImage} style={styles.profileImage} />
               <View style={styles.chatContent}>
                 <Text style={styles.userName}>{item.aliasName}</Text>
-                <Text style={styles.userMessage}>{item.email}</Text>
+                <Text style={styles.userMessage} numberOfLines={1}>
+                  {lastMessages[item.friendId] || 'Loading...'}
+                </Text>
               </View>
             </TouchableOpacity>
           )}

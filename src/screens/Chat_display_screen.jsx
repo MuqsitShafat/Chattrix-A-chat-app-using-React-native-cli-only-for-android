@@ -8,20 +8,63 @@ import {
   TextInput,
   ScrollView,
   StatusBar,
+  Alert,
+  Animated,
+  BackHandler,
 } from 'react-native';
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useContext, useRef} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
+import LottieView from 'lottie-react-native';
 import {pickMedia} from '../components/MediaPicker';
-import {getFirestore, doc, onSnapshot} from '@react-native-firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  onSnapshot,
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  setDoc,
+  updateDoc,
+  writeBatch,
+  arrayUnion,
+} from '@react-native-firebase/firestore';
+import {AuthContext} from '../Auth/AuthContext';
 
 const Chat_display_screen = ({navigation, route}) => {
   const {friendId, friendName, profilePic} = route.params;
+  const {user} = useContext(AuthContext);
   const [onlineStatus, setOnlineStatus] = useState('Offline');
+  const [messageText, setMessageText] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [selectedMessages, setSelectedMessages] = useState([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
   const db = getFirestore();
+  const scrollViewRef = useRef();
+  const sendAnim = useRef(new Animated.Value(0)).current;
+
+  const chatId = [user.uid, friendId].sort().join('_');
+
+  useEffect(() => {
+    const backAction = () => {
+      if (isSelectionMode) {
+        exitSelection();
+        return true;
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction,
+    );
+
+    return () => backHandler.remove();
+  }, [isSelectionMode]);
 
   useEffect(() => {
     if (!friendId) return;
-
     const userRef = doc(db, 'users', friendId);
     const unsubscribe = onSnapshot(userRef, documentSnapshot => {
       if (documentSnapshot.exists()) {
@@ -40,9 +83,124 @@ const Chat_display_screen = ({navigation, route}) => {
         }
       }
     });
-
     return () => unsubscribe();
   }, [friendId]);
+
+  useEffect(() => {
+    const messagesRef = collection(db, 'chats', chatId, 'messages');
+    const q = query(messagesRef, orderBy('createdAt', 'asc'));
+
+    const unsubscribe = onSnapshot(q, querySnapshot => {
+      const allMessages = querySnapshot.docs
+        .map(docSnap => {
+          const data = docSnap.data();
+          if (data.senderId === friendId && data.status !== 'read') {
+            updateDoc(docSnap.ref, {status: 'read'});
+          }
+          return {...data, id: docSnap.id};
+        })
+        .filter(msg => !msg.deletedBy || !msg.deletedBy.includes(user.uid));
+      setMessages(allMessages);
+    });
+
+    return () => unsubscribe();
+  }, [chatId]);
+
+  const sendMessage = async () => {
+    if (messageText.trim().length === 0) return;
+    Animated.sequence([
+      Animated.timing(sendAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(sendAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    const msg = messageText;
+    setMessageText('');
+    try {
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        text: msg,
+        senderId: user.uid,
+        receiverId: friendId,
+        createdAt: serverTimestamp(),
+        status: 'sent',
+        deletedBy: [],
+      });
+      await setDoc(
+        doc(db, 'chats', chatId),
+        {
+          lastMessage: msg,
+          lastUpdated: serverTimestamp(),
+          users: [user.uid, friendId],
+        },
+        {merge: true},
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const toggleSelection = id => {
+    if (selectedMessages.includes(id)) {
+      const newList = selectedMessages.filter(item => item !== id);
+      setSelectedMessages(newList);
+      if (newList.length === 0) setIsSelectionMode(false);
+    } else {
+      setSelectedMessages([...selectedMessages, id]);
+    }
+  };
+
+  const handleLongPress = id => {
+    setIsSelectionMode(true);
+    toggleSelection(id);
+  };
+
+  const deleteSelectedMessages = () => {
+    Alert.alert(
+      'Delete Messages',
+      `Delete ${selectedMessages.length} messages from your side?`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Delete for Me',
+          style: 'destructive',
+          onPress: async () => {
+            const batch = writeBatch(db);
+            selectedMessages.forEach(msgId => {
+              const msgData = messages.find(m => m.id === msgId);
+              const docRef = doc(db, 'chats', chatId, 'messages', msgId);
+
+              if (msgData?.deletedBy?.includes(friendId)) {
+                batch.delete(docRef);
+              } else {
+                batch.update(docRef, {
+                  deletedBy: arrayUnion(user.uid),
+                });
+              }
+            });
+            await batch.commit();
+            exitSelection();
+          },
+        },
+      ],
+    );
+  };
+
+  const exitSelection = () => {
+    setIsSelectionMode(false);
+    setSelectedMessages([]);
+  };
+
+  const planeRotation = sendAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '-45deg'],
+  });
 
   const displayImage =
     profilePic && profilePic !== ''
@@ -51,83 +209,159 @@ const Chat_display_screen = ({navigation, route}) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.Content_container}>
+      <StatusBar barStyle="light-content" />
+      <View
+        style={[
+          styles.Content_container,
+          isSelectionMode && {backgroundColor: '#444'},
+        ]}>
         <View style={styles.left_section}>
           <TouchableOpacity
-            style={styles.back_arrow}
-            onPress={() => navigation.goBack()}>
-            <Image
-              source={require('../images/Frame.png')}
-              style={styles.icon}
+            onPress={
+              isSelectionMode ? exitSelection : () => navigation.goBack()
+            }>
+            <Icon
+              name={isSelectionMode ? 'close' : 'arrow-back'}
+              size={30}
+              color="white"
+              style={{marginRight: 15}}
             />
           </TouchableOpacity>
-          <View style={styles.name_container}>
-            <Text style={styles.name}>{friendName}</Text>
-            <Text style={styles.online}>{onlineStatus}</Text>
-          </View>
+          {!isSelectionMode ? (
+            <View style={styles.name_container}>
+              <Text style={styles.name}>{friendName}</Text>
+              <Text style={styles.online}>{onlineStatus}</Text>
+            </View>
+          ) : (
+            <Text style={styles.name}>{selectedMessages.length} selected</Text>
+          )}
         </View>
 
         <View style={styles.right_section}>
-          <TouchableOpacity style={styles.call_icon}>
-            <Icon name="call-outline" size={37} color="black" />
-          </TouchableOpacity>
-          <Image source={displayImage} style={styles.image} />
+          {isSelectionMode ? (
+            <TouchableOpacity onPress={deleteSelectedMessages}>
+              <Icon name="trash-outline" size={30} color="red" />
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.call_icon}>
+                <Icon name="call-outline" size={37} color="black" />
+              </TouchableOpacity>
+              <Image source={displayImage} style={styles.image} />
+            </>
+          )}
         </View>
       </View>
 
-      <ScrollView style={styles.chat_area}>
-        <View style={styles.message_container}>
-          <View style={styles.received_message}>
-            <Text style={styles.received_message_text}>
-              Hey {friendName}, how's it going?
+      <ScrollView
+        style={styles.chat_area}
+        ref={scrollViewRef}
+        onContentSizeChange={() =>
+          !isSelectionMode &&
+          scrollViewRef.current?.scrollToEnd({animated: true})
+        }>
+        {messages.length === 0 ? (
+          <View style={{flex: 1, alignItems: 'center', marginTop: 100}}>
+            <LottieView
+              source={require('../assets/animations/no_contact_found.json')}
+              autoPlay
+              loop
+              style={{width: 250, height: 250}}
+            />
+            <Text
+              style={{
+                color: 'white',
+                fontFamily: 'IrishGrover-Regular',
+                fontSize: 18,
+                marginTop: 10,
+              }}>
+              No messages yet. Say Hi!
             </Text>
           </View>
-
-          <View style={styles.sent_message}>
-            <Text style={styles.sent_message_text}>
-              Hey! I'm doing great, just working on a new app.
-            </Text>
+        ) : (
+          <View style={styles.message_container}>
+            {messages.map(item => {
+              const isSelected = selectedMessages.includes(item.id);
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  onLongPress={() => handleLongPress(item.id)}
+                  onPress={() =>
+                    isSelectionMode ? toggleSelection(item.id) : null
+                  }
+                  activeOpacity={0.9}
+                  style={[
+                    item.senderId === user.uid
+                      ? styles.sent_message
+                      : styles.received_message,
+                    isSelected && {backgroundColor: 'rgba(62, 127, 224, 0.5)'},
+                  ]}>
+                  <Text
+                    style={
+                      item.senderId === user.uid
+                        ? styles.sent_message_text
+                        : styles.received_message_text
+                    }>
+                    {item.text}
+                  </Text>
+                  {item.senderId === user.uid && (
+                    <View style={{alignSelf: 'flex-end', marginTop: 2}}>
+                      <Icon
+                        name={
+                          item.status === 'read'
+                            ? 'checkmark-done'
+                            : 'checkmark'
+                        }
+                        size={16}
+                        color={item.status === 'read' ? '#3E7FE0' : '#A1A1A1'}
+                      />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </View>
-        </View>
+        )}
       </ScrollView>
 
-      <View style={styles.input_wrapper}>
-        <View style={styles.Message_container}>
-          <View style={styles.input_container}>
-            <TextInput
-              placeholder="Type a message"
-              placeholderTextColor="#A1A1A1"
-              style={styles.input}
-            />
-          </View>
-          <View style={styles.send_container}>
-            <TouchableOpacity
-              style={styles.attach_button}
-              onPress={async () => {
-                const media = await pickMedia();
-                if (media) {
-                  console.log('Picked media URI:', media.uri);
-                }
-              }}>
-              <Icon name="attach-outline" size={37} color="black" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.send_button}>
-              <Icon name="send-outline" size={25} color="white" />
-            </TouchableOpacity>
+      {!isSelectionMode && (
+        <View style={styles.input_wrapper}>
+          <View style={styles.Message_container}>
+            <View style={styles.input_container}>
+              <TextInput
+                placeholder="Type a message"
+                placeholderTextColor="#A1A1A1"
+                style={styles.input}
+                value={messageText}
+                onChangeText={setMessageText}
+              />
+            </View>
+            <View style={styles.send_container}>
+              <TouchableOpacity
+                style={styles.attach_button}
+                onPress={async () => {
+                  const media = await pickMedia();
+                  if (media) console.log('Picked media URI:', media.uri);
+                }}>
+                <Icon name="attach-outline" size={37} color="black" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.send_button}
+                onPress={sendMessage}>
+                <Animated.View style={{transform: [{rotate: planeRotation}]}}>
+                  <Icon name="send-outline" size={25} color="white" />
+                </Animated.View>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
+      )}
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#510DC0',
-  },
+  container: {flex: 1, backgroundColor: '#510DC0'},
   Content_container: {
     flexDirection: 'row',
     backgroundColor: '#635A71',
@@ -136,52 +370,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: '4%',
-    marginTop: StatusBar.currentHeight,
   },
-  left_section: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  right_section: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  back_arrow: {
-    marginRight: 20,
-  },
-  icon: {
-    width: 34,
-    height: 34,
-  },
-  name_container: {
-    justifyContent: 'center',
-  },
-  name: {
-    fontSize: 28,
-    color: 'white',
-    fontFamily: 'IrishGrover-Regular',
-  },
+  left_section: {flexDirection: 'row', alignItems: 'center'},
+  right_section: {flexDirection: 'row', alignItems: 'center'},
+  back_arrow: {marginRight: 20},
+  icon: {width: 34, height: 34},
+  name_container: {justifyContent: 'center'},
+  name: {fontSize: 28, color: 'white', fontFamily: 'Milonga-Regular'},
   online: {
     fontSize: 14,
     color: '#d1d1d1',
     fontFamily: 'InstrumentSans-Regular',
   },
-  call_icon: {
-    marginRight: 10,
-  },
-  image: {
-    width: 45,
-    height: 45,
-    borderRadius: 999,
-    marginLeft: 10,
-  },
-  chat_area: {
-    flex: 1,
-    backgroundColor: '#510DC0',
-  },
-  message_container: {
-    padding: 16,
-  },
+  call_icon: {marginRight: 10},
+  image: {width: 45, height: 45, borderRadius: 999, marginLeft: 10},
+  chat_area: {flex: 1, backgroundColor: '#510DC0'},
+  message_container: {padding: 16},
   received_message: {
     alignSelf: 'flex-start',
     backgroundColor: '#D9D9D9',
@@ -208,11 +412,7 @@ const styles = StyleSheet.create({
     color: 'white',
     fontFamily: 'InstrumentSans-Regular',
   },
-  input_wrapper: {
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: '4%',
-  },
+  input_wrapper: {width: '100%', alignItems: 'center', marginBottom: '4%'},
   Message_container: {
     elevation: 10,
     flexDirection: 'row',
@@ -223,19 +423,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: '4%',
   },
-  input_container: {
-    flex: 1,
-  },
+  input_container: {flex: 1},
   input: {
     fontSize: 20,
     color: '#000',
     fontFamily: 'InstrumentSans-Regular',
     marginLeft: 10,
   },
-  send_container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+  send_container: {flexDirection: 'row', alignItems: 'center'},
   attach_button: {
     alignItems: 'center',
     justifyContent: 'center',
