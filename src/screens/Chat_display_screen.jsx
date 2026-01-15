@@ -11,6 +11,7 @@ import {
   Alert,
   Animated,
   BackHandler,
+  Modal,
 } from 'react-native';
 import React, {useState, useEffect, useContext, useRef} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -33,21 +34,30 @@ import {
 import {AuthContext} from '../Auth/AuthContext';
 
 const Chat_display_screen = ({navigation, route}) => {
-  const {friendId, friendName, profilePic} = route.params;
+  const friendId = route?.params?.friendId;
+  const friendName = route?.params?.friendName || 'User';
+  const initialProfilePic = route?.params?.profilePic;
+
   const {user} = useContext(AuthContext);
   const [onlineStatus, setOnlineStatus] = useState('Offline');
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const db = getFirestore();
   const scrollViewRef = useRef();
   const sendAnim = useRef(new Animated.Value(0)).current;
 
-  const chatId = [user.uid, friendId].sort().join('_');
+  const chatId =
+    user?.uid && friendId ? [user.uid, friendId].sort().join('_') : null;
 
   useEffect(() => {
     const backAction = () => {
+      if (showProfileModal) {
+        setShowProfileModal(false);
+        return true;
+      }
       if (isSelectionMode) {
         exitSelection();
         return true;
@@ -59,7 +69,7 @@ const Chat_display_screen = ({navigation, route}) => {
       backAction,
     );
     return () => backHandler.remove();
-  }, [isSelectionMode]);
+  }, [isSelectionMode, showProfileModal]);
 
   useEffect(() => {
     if (!friendId) return;
@@ -86,6 +96,7 @@ const Chat_display_screen = ({navigation, route}) => {
   }, [friendId]);
 
   useEffect(() => {
+    if (!chatId) return;
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(messagesRef, orderBy('createdAt', 'asc'));
     const unsubscribe = onSnapshot(q, querySnapshot => {
@@ -104,7 +115,7 @@ const Chat_display_screen = ({navigation, route}) => {
   }, [chatId]);
 
   const sendMessage = async () => {
-    if (messageText.trim().length === 0) return;
+    if (messageText.trim().length === 0 || !chatId) return;
     Animated.sequence([
       Animated.timing(sendAnim, {
         toValue: 1,
@@ -161,7 +172,6 @@ const Chat_display_screen = ({navigation, route}) => {
   const deleteSelectedMessages = () => {
     const now = Date.now();
     const limit = 3 * 60 * 1000;
-
     let timeRemainingStr = '';
     const canDeleteForEveryone = selectedMessages.every(msgId => {
       const msgData = messages.find(m => m.id === msgId);
@@ -223,7 +233,6 @@ const Chat_display_screen = ({navigation, route}) => {
         },
       });
     }
-
     Alert.alert(
       'Delete Messages',
       `Delete ${selectedMessages.length} message(s)?`,
@@ -235,18 +244,51 @@ const Chat_display_screen = ({navigation, route}) => {
     setIsSelectionMode(false);
     setSelectedMessages([]);
   };
+
   const planeRotation = sendAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '-45deg'],
   });
+
+  let photoUrl = initialProfilePic;
+  if (photoUrl && typeof photoUrl === 'string') {
+    if (photoUrl.includes('googleusercontent.com')) {
+      photoUrl = photoUrl.replace('s96-c', 's400-c');
+    } else if (photoUrl.includes('facebook.com')) {
+      photoUrl = `${photoUrl}?type=large`;
+    }
+  }
+
   const displayImage =
-    profilePic && profilePic !== ''
-      ? {uri: profilePic}
+    photoUrl && photoUrl !== ''
+      ? {uri: photoUrl}
       : require('../images/User_profile_icon.jpg');
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
+
+      <Modal
+        visible={showProfileModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowProfileModal(false)}>
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowProfileModal(false)}>
+          <View style={styles.darkBackground} />
+          <View style={styles.modalImageWrapper}>
+            <Image
+              source={displayImage}
+              style={styles.fullImage}
+              resizeMode="cover"
+              fadeDuration={0}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <View
         style={[
           styles.Content_container,
@@ -283,11 +325,14 @@ const Chat_display_screen = ({navigation, route}) => {
               <TouchableOpacity style={styles.call_icon}>
                 <Icon name="call-outline" size={37} color="black" />
               </TouchableOpacity>
-              <Image source={displayImage} style={styles.image} />
+              <TouchableOpacity onPress={() => setShowProfileModal(true)}>
+                <Image source={displayImage} style={styles.image} />
+              </TouchableOpacity>
             </>
           )}
         </View>
       </View>
+
       <ScrollView
         style={styles.chat_area}
         ref={scrollViewRef}
@@ -366,6 +411,7 @@ const Chat_display_screen = ({navigation, route}) => {
           </View>
         )}
       </ScrollView>
+
       {!isSelectionMode && (
         <View style={styles.input_wrapper}>
           <View style={styles.Message_container}>
@@ -485,6 +531,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modalOverlay: {flex: 1, justifyContent: 'center', alignItems: 'center'},
+  darkBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+  },
+  modalImageWrapper: {
+    width: 320,
+    height: 320,
+    borderRadius: 99999,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'gray',
+  },
+  fullImage: {width: '100%', height: '100%'},
 });
 
 export default Chat_display_screen;
