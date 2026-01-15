@@ -54,12 +54,10 @@ const Chat_display_screen = ({navigation, route}) => {
       }
       return false;
     };
-
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       backAction,
     );
-
     return () => backHandler.remove();
   }, [isSelectionMode]);
 
@@ -73,11 +71,12 @@ const Chat_display_screen = ({navigation, route}) => {
           setOnlineStatus('Online');
         } else if (data.lastSeen) {
           const date = data.lastSeen.toDate();
-          const timeString = date.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          });
-          setOnlineStatus(`Last seen at ${timeString}`);
+          setOnlineStatus(
+            `Last seen at ${date.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}`,
+          );
         } else {
           setOnlineStatus('Offline');
         }
@@ -89,7 +88,6 @@ const Chat_display_screen = ({navigation, route}) => {
   useEffect(() => {
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(messagesRef, orderBy('createdAt', 'asc'));
-
     const unsubscribe = onSnapshot(q, querySnapshot => {
       const allMessages = querySnapshot.docs
         .map(docSnap => {
@@ -102,7 +100,6 @@ const Chat_display_screen = ({navigation, route}) => {
         .filter(msg => !msg.deletedBy || !msg.deletedBy.includes(user.uid));
       setMessages(allMessages);
     });
-
     return () => unsubscribe();
   }, [chatId]);
 
@@ -120,7 +117,6 @@ const Chat_display_screen = ({navigation, route}) => {
         useNativeDriver: true,
       }),
     ]).start();
-
     const msg = messageText;
     setMessageText('');
     try {
@@ -131,6 +127,7 @@ const Chat_display_screen = ({navigation, route}) => {
         createdAt: serverTimestamp(),
         status: 'sent',
         deletedBy: [],
+        isDeleted: false,
       });
       await setDoc(
         doc(db, 'chats', chatId),
@@ -162,33 +159,75 @@ const Chat_display_screen = ({navigation, route}) => {
   };
 
   const deleteSelectedMessages = () => {
+    const now = Date.now();
+    const limit = 3 * 60 * 1000;
+
+    let timeRemainingStr = '';
+    const canDeleteForEveryone = selectedMessages.every(msgId => {
+      const msgData = messages.find(m => m.id === msgId);
+      if (
+        !msgData ||
+        msgData.senderId !== user.uid ||
+        !msgData.createdAt ||
+        msgData.isDeleted
+      )
+        return false;
+      const diff = now - msgData.createdAt.toMillis();
+      if (diff < limit) {
+        const remainingSecs = Math.floor((limit - diff) / 1000);
+        const mins = Math.floor(remainingSecs / 60);
+        const secs = remainingSecs % 60;
+        timeRemainingStr = `(${mins}m ${secs}s left)`;
+        return true;
+      }
+      return false;
+    });
+
+    const alertButtons = [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Delete for Me',
+        style: 'destructive',
+        onPress: async () => {
+          const batch = writeBatch(db);
+          selectedMessages.forEach(msgId => {
+            const msgData = messages.find(m => m.id === msgId);
+            const docRef = doc(db, 'chats', chatId, 'messages', msgId);
+            if (msgData?.deletedBy?.includes(friendId)) {
+              batch.delete(docRef);
+            } else {
+              batch.update(docRef, {deletedBy: arrayUnion(user.uid)});
+            }
+          });
+          await batch.commit();
+          exitSelection();
+        },
+      },
+    ];
+
+    if (canDeleteForEveryone) {
+      alertButtons.splice(1, 0, {
+        text: `Delete for Everyone ${timeRemainingStr}`,
+        style: 'destructive',
+        onPress: async () => {
+          const batch = writeBatch(db);
+          selectedMessages.forEach(msgId => {
+            const docRef = doc(db, 'chats', chatId, 'messages', msgId);
+            batch.update(docRef, {
+              text: 'This message was deleted',
+              isDeleted: true,
+            });
+          });
+          await batch.commit();
+          exitSelection();
+        },
+      });
+    }
+
     Alert.alert(
       'Delete Messages',
-      `Delete ${selectedMessages.length} messages from your side?`,
-      [
-        {text: 'Cancel', style: 'cancel'},
-        {
-          text: 'Delete for Me',
-          style: 'destructive',
-          onPress: async () => {
-            const batch = writeBatch(db);
-            selectedMessages.forEach(msgId => {
-              const msgData = messages.find(m => m.id === msgId);
-              const docRef = doc(db, 'chats', chatId, 'messages', msgId);
-
-              if (msgData?.deletedBy?.includes(friendId)) {
-                batch.delete(docRef);
-              } else {
-                batch.update(docRef, {
-                  deletedBy: arrayUnion(user.uid),
-                });
-              }
-            });
-            await batch.commit();
-            exitSelection();
-          },
-        },
-      ],
+      `Delete ${selectedMessages.length} message(s)?`,
+      alertButtons,
     );
   };
 
@@ -196,12 +235,10 @@ const Chat_display_screen = ({navigation, route}) => {
     setIsSelectionMode(false);
     setSelectedMessages([]);
   };
-
   const planeRotation = sendAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '-45deg'],
   });
-
   const displayImage =
     profilePic && profilePic !== ''
       ? {uri: profilePic}
@@ -236,7 +273,6 @@ const Chat_display_screen = ({navigation, route}) => {
             <Text style={styles.name}>{selectedMessages.length} selected</Text>
           )}
         </View>
-
         <View style={styles.right_section}>
           {isSelectionMode ? (
             <TouchableOpacity onPress={deleteSelectedMessages}>
@@ -252,7 +288,6 @@ const Chat_display_screen = ({navigation, route}) => {
           )}
         </View>
       </View>
-
       <ScrollView
         style={styles.chat_area}
         ref={scrollViewRef}
@@ -282,6 +317,7 @@ const Chat_display_screen = ({navigation, route}) => {
           <View style={styles.message_container}>
             {messages.map(item => {
               const isSelected = selectedMessages.includes(item.id);
+              const isMe = item.senderId === user.uid;
               return (
                 <TouchableOpacity
                   key={item.id}
@@ -291,20 +327,27 @@ const Chat_display_screen = ({navigation, route}) => {
                   }
                   activeOpacity={0.9}
                   style={[
-                    item.senderId === user.uid
-                      ? styles.sent_message
-                      : styles.received_message,
+                    isMe ? styles.sent_message : styles.received_message,
                     isSelected && {backgroundColor: 'rgba(62, 127, 224, 0.5)'},
+                    item.isDeleted && {backgroundColor: '#444', opacity: 0.6},
                   ]}>
                   <Text
-                    style={
-                      item.senderId === user.uid
+                    style={[
+                      isMe
                         ? styles.sent_message_text
-                        : styles.received_message_text
-                    }>
-                    {item.text}
+                        : styles.received_message_text,
+                      item.isDeleted && {fontStyle: 'italic', color: '#ccc'},
+                    ]}>
+                    {item.isDeleted ? (
+                      <>
+                        <Icon name="ban-outline" size={14} /> This message was
+                        deleted
+                      </>
+                    ) : (
+                      item.text
+                    )}
                   </Text>
-                  {item.senderId === user.uid && (
+                  {isMe && !item.isDeleted && (
                     <View style={{alignSelf: 'flex-end', marginTop: 2}}>
                       <Icon
                         name={
@@ -323,7 +366,6 @@ const Chat_display_screen = ({navigation, route}) => {
           </View>
         )}
       </ScrollView>
-
       {!isSelectionMode && (
         <View style={styles.input_wrapper}>
           <View style={styles.Message_container}>
@@ -341,7 +383,7 @@ const Chat_display_screen = ({navigation, route}) => {
                 style={styles.attach_button}
                 onPress={async () => {
                   const media = await pickMedia();
-                  if (media) console.log('Picked media URI:', media.uri);
+                  if (media) console.log(media.uri);
                 }}>
                 <Icon name="attach-outline" size={37} color="black" />
               </TouchableOpacity>
@@ -373,8 +415,6 @@ const styles = StyleSheet.create({
   },
   left_section: {flexDirection: 'row', alignItems: 'center'},
   right_section: {flexDirection: 'row', alignItems: 'center'},
-  back_arrow: {marginRight: 20},
-  icon: {width: 34, height: 34},
   name_container: {justifyContent: 'center'},
   name: {fontSize: 28, color: 'white', fontFamily: 'Milonga-Regular'},
   online: {

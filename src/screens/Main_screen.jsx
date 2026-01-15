@@ -9,7 +9,6 @@ import {
   updateDoc,
   getDocs,
   writeBatch,
-  limit,
 } from '@react-native-firebase/firestore';
 import {getAuth} from '@react-native-firebase/auth';
 import {
@@ -47,22 +46,18 @@ const Main_screen = ({navigation}) => {
       }
       return false;
     };
-
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       backAction,
     );
-
     return () => backHandler.remove();
   }, [isSearching]);
 
   useEffect(() => {
     const user = auth.currentUser;
     if (!user) return;
-
     const contactsRef = collection(db, 'users', user.uid, 'contacts');
     const q = query(contactsRef, orderBy('addedAt', 'desc'));
-
     const unsubscribe = onSnapshot(q, querySnapshot => {
       const friends = [];
       querySnapshot.forEach(doc => {
@@ -78,38 +73,30 @@ const Main_screen = ({navigation}) => {
       });
       setDynamicUsers(friends);
     });
-
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     const user = auth.currentUser;
     if (!user || dynamicUsers.length === 0) return;
-
     const unsubscribes = dynamicUsers.map(friend => {
       const chatId = [user.uid, friend.friendId].sort().join('_');
       const messagesRef = collection(db, 'chats', chatId, 'messages');
       const q = query(messagesRef, orderBy('createdAt', 'desc'));
-
       return onSnapshot(q, querySnapshot => {
-        const allMsgs = querySnapshot.docs.map(d => ({
-          ...d.data(),
-          id: d.id,
-        }));
-
+        const allMsgs = querySnapshot.docs.map(d => ({...d.data(), id: d.id}));
         const latestValidMsg = allMsgs.find(
           msg => !msg.deletedBy || !msg.deletedBy.includes(user.uid),
         );
-
-        setLastMessages(prev => ({
-          ...prev,
-          [friend.friendId]: latestValidMsg
-            ? latestValidMsg.text
-            : 'No messages yet. Say Hi! 👋',
-        }));
+        let displayLastMsg = 'No messages yet. Say Hi! 👋';
+        if (latestValidMsg) {
+          displayLastMsg = latestValidMsg.isDeleted
+            ? '🚫 This message was deleted'
+            : latestValidMsg.text;
+        }
+        setLastMessages(prev => ({...prev, [friend.friendId]: displayLastMsg}));
       });
     });
-
     return () => {
       unsubscribes.forEach(unsub => unsub());
     };
@@ -132,7 +119,6 @@ const Main_screen = ({navigation}) => {
               const messagesRef = collection(db, 'chats', chatId, 'messages');
               const querySnapshot = await getDocs(messagesRef);
               const batch = writeBatch(db);
-
               querySnapshot.forEach(msgDoc => {
                 const data = msgDoc.data();
                 const docRef = msgDoc.ref;
@@ -146,13 +132,10 @@ const Main_screen = ({navigation}) => {
                   });
                 }
               });
-
               await batch.commit();
               await updateDoc(
                 doc(db, 'users', user.uid, 'contacts', contactId),
-                {
-                  chatHidden: true,
-                },
+                {chatHidden: true},
               );
             } catch (error) {
               console.error('Error deleting chat:', error);
@@ -167,11 +150,9 @@ const Main_screen = ({navigation}) => {
     const matchesSearch = user.aliasName
       ?.toLowerCase()
       .includes(searchQuery.toLowerCase());
-    if (isSearching && searchQuery.length > 0) {
-      return matchesSearch;
-    } else {
-      return !user.chatHidden;
-    }
+    return isSearching && searchQuery.length > 0
+      ? matchesSearch
+      : !user.chatHidden;
   });
 
   return (
@@ -180,8 +161,7 @@ const Main_screen = ({navigation}) => {
         <TouchableOpacity onPress={() => navigation.openDrawer()}>
           <Icon name="menu" size={45} color="red" />
         </TouchableOpacity>
-
-        {isSearching ? (
+        {isSearching && (
           <TextInput
             style={styles.searchInput}
             placeholder={t('search_placeholder')}
@@ -195,25 +175,19 @@ const Main_screen = ({navigation}) => {
               }
             }}
           />
-        ) : null}
-
+        )}
         <TouchableOpacity
           onPress={() => {
-            if (isSearching) {
-              setSearchQuery('');
-            }
+            if (isSearching) setSearchQuery('');
             setIsSearching(!isSearching);
           }}>
           <Image source={require('../images/Frame2.png')} />
         </TouchableOpacity>
       </View>
-
       <View style={styles.circle}></View>
-
       <View style={styles.chat_text_view}>
         <Text style={styles.chat_text}>{t('chat')}</Text>
       </View>
-
       {dynamicUsers.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
@@ -226,32 +200,6 @@ const Main_screen = ({navigation}) => {
             {t('connect_friends')}
             {'\n'}
             <Text style={styles.subText}>{t('hit_add_button')}</Text>
-          </Text>
-        </View>
-      ) : isSearching &&
-        searchQuery.length > 0 &&
-        filteredUsers.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>{t('no_contact_found')}</Text>
-          <LottieView
-            source={require('../assets/animations/no_contact_found.json')}
-            autoPlay
-            loop
-            style={[styles.lottieStyle, {width: 250, height: 250}]}
-          />
-        </View>
-      ) : !isSearching && filteredUsers.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <LottieView
-            source={require('../assets/animations/no_active_list.json')}
-            autoPlay
-            loop
-            style={styles.lottieStyle}
-          />
-          <Text style={styles.emptyText}>
-            {t('no_active_chats')}
-            {'\n'}
-            <Text style={styles.subText}>{t('start_conversation_hint')}</Text>
           </Text>
         </View>
       ) : (
@@ -268,9 +216,7 @@ const Main_screen = ({navigation}) => {
                   const user = auth.currentUser;
                   await updateDoc(
                     doc(db, 'users', user.uid, 'contacts', item.id),
-                    {
-                      chatHidden: false,
-                    },
+                    {chatHidden: false},
                   );
                 }
                 navigation.navigate('Chat', {
@@ -334,16 +280,8 @@ const styles = StyleSheet.create({
     top: 0,
     right: 0,
   },
-  chat_text_view: {
-    marginTop: '18%',
-    marginLeft: '5%',
-    marginBottom: '3%',
-  },
-  chat_text: {
-    fontSize: 80,
-    color: 'black',
-    fontFamily: 'IrishGrover-Regular',
-  },
+  chat_text_view: {marginTop: '18%', marginLeft: '5%', marginBottom: '3%'},
+  chat_text: {fontSize: 80, color: 'black', fontFamily: 'IrishGrover-Regular'},
   flatlist_container: {
     backgroundColor: '#D9D9D9',
     borderRadius: 20,
@@ -352,25 +290,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  profileImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  chatContent: {
-    marginLeft: 15,
-    flex: 1,
-  },
-  userName: {
-    fontSize: 24,
-    fontFamily: 'IrishGrover-Regular',
-    color: '#333',
-  },
-  userMessage: {
-    fontSize: 16,
-    color: '#564141',
-    marginTop: 5,
-  },
+  profileImage: {width: 50, height: 50, borderRadius: 25},
+  chatContent: {marginLeft: 15, flex: 1},
+  userName: {fontSize: 24, fontFamily: 'IrishGrover-Regular', color: '#333'},
+  userMessage: {fontSize: 16, color: '#564141', marginTop: 5},
   floatingButton: {
     position: 'absolute',
     bottom: 100,
@@ -379,19 +302,13 @@ const styles = StyleSheet.create({
     elevation: 3,
     zIndex: 999,
   },
-  floatingIcon: {
-    width: 60,
-    height: 60,
-  },
+  floatingIcon: {width: 60, height: 60},
   emptyContainer: {
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: '15%',
   },
-  lottieStyle: {
-    width: 200,
-    height: 200,
-  },
+  lottieStyle: {width: 200, height: 200},
   emptyText: {
     fontSize: 18,
     color: '#510DC0',
@@ -400,14 +317,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
     lineHeight: 30,
   },
-  subText: {
-    fontSize: 17,
-    color: '#75926bff',
-    fontFamily: 'Milonga-Regular',
-  },
-  spacing: {
-    marginTop: '19%',
-  },
+  subText: {fontSize: 17, color: '#75926bff', fontFamily: 'Milonga-Regular'},
+  spacing: {marginTop: '19%'},
 });
 
 export default Main_screen;
