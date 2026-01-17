@@ -13,66 +13,65 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import LottieView from 'lottie-react-native';
 
-// 1. UPDATED MODULAR IMPORTS
-import { getAuth } from '@react-native-firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  writeBatch, 
-  doc, 
-  serverTimestamp 
+import {getAuth} from '@react-native-firebase/auth';
+import {
+  getFirestore,
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  writeBatch,
+  doc,
+  serverTimestamp,
 } from '@react-native-firebase/firestore';
 
 const Call_screen = ({navigation}) => {
   const {t} = useTranslation();
-  const [data, setData] = useState([]); // Start with empty array
-  const [loading, setLoading] = useState(true); // Added loading state
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
- // 2. INITIALIZE MODULAR INSTANCES
   const auth = getAuth();
   const db = getFirestore();
   const user = auth.currentUser;
 
-  // 📡 Real-time listener (Modular Style)
   useEffect(() => {
     if (!user) return;
 
-    // Build the query using modular functions
     const callsQuery = query(
       collection(db, 'calls'),
       where('userId', '==', user.uid),
-      orderBy('timestamp', 'desc')
+      orderBy('timestamp', 'desc'),
     );
 
-    const unsubscribe = onSnapshot(callsQuery, (querySnapshot) => {
-      const calls = [];
-      querySnapshot.forEach((documentSnapshot) => {
-        calls.push({
-          ...documentSnapshot.data(),
-          id: documentSnapshot.id,
+    const unsubscribe = onSnapshot(
+      callsQuery,
+      querySnapshot => {
+        const calls = [];
+        querySnapshot.forEach(documentSnapshot => {
+          calls.push({
+            ...documentSnapshot.data(),
+            id: documentSnapshot.id,
+          });
         });
-      });
-      setData(calls);
-      setLoading(false);
-    }, (error) => {
-      console.error("Firestore Error: ", error);
-      setLoading(false);
-    });
+        setData(calls);
+        setLoading(false);
+      },
+      error => {
+        console.error('Firestore Error: ', error);
+        setLoading(false);
+      },
+    );
 
     return () => unsubscribe();
   }, [user]);
 
-  // 🗑️ Delete logic (Modular Style)
   const deleteSelected = async () => {
     try {
-      const batch = writeBatch(db); // Create batch
-      
+      const batch = writeBatch(db);
+
       selectedItems.forEach(itemId => {
         const docRef = doc(db, 'calls', itemId);
         batch.delete(docRef);
@@ -82,7 +81,7 @@ const Call_screen = ({navigation}) => {
       setSelectedItems([]);
       setSelectionMode(false);
     } catch (error) {
-      console.error("Delete failed: ", error);
+      console.error('Delete failed: ', error);
     }
   };
 
@@ -104,7 +103,6 @@ const Call_screen = ({navigation}) => {
     setSelectedItems(data.map(item => item.id));
   };
 
-  // Hardware Back Button Handler
   useEffect(() => {
     const backAction = () => {
       if (selectionMode) {
@@ -121,11 +119,10 @@ const Call_screen = ({navigation}) => {
     return () => backHandler.remove();
   }, [selectionMode]);
 
-  if (loading) return null; // Or a small activity indicator
+  if (loading) return null;
 
   return (
     <View style={styles.container}>
-      {/* Top Header Row */}
       <View style={styles.topRow}>
         {selectionMode ? (
           <>
@@ -161,7 +158,6 @@ const Call_screen = ({navigation}) => {
         <Text style={styles.chat_text}>{t('call')}</Text>
       </View>
 
-      {/* 🎰 AUTOMATIC TOGGLE: List vs Lottie */}
       {data.length === 0 ? (
         <View style={styles.emptyContainer}>
           <LottieView
@@ -254,7 +250,7 @@ const styles = StyleSheet.create({
   listPadding: {
     paddingHorizontal: '8%',
     paddingTop: '5%',
-    paddingBottom: 100, // Extra space for TabBar
+    paddingBottom: 100,
   },
   flatlist_container: {
     backgroundColor: '#D3E2F8',

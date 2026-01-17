@@ -1,14 +1,15 @@
 import './src/i18n/i18n';
-import React, {useEffect, useContext} from 'react';
+import React, {useEffect, useContext, useRef} from 'react';
 import {AppState} from 'react-native';
 import BootSplash from 'react-native-bootsplash';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
-import  { getAuth } from '@react-native-firebase/auth';
+import {getAuth} from '@react-native-firebase/auth';
 import {
   getFirestore,
   doc,
   updateDoc,
   serverTimestamp,
+  onSnapshot,
 } from '@react-native-firebase/firestore';
 
 import {
@@ -69,13 +70,27 @@ const TabNavigator = () => (
     <Tab.Screen
       name="Home_Chat_navigator"
       component={Home_Chat_navigator}
-      options={({route}) => {
-        const routeName = getFocusedRouteNameFromRoute(route) ?? 'Home';
-        if (routeName === 'Chat' || routeName === 'Add_Contact') {
-          return {tabBarStyle: {display: 'none'}};
-        }
-        return {};
-      }}
+      options={({route}) => ({
+        tabBarStyle: (() => {
+          const routeName = getFocusedRouteNameFromRoute(route) ?? 'Home';
+          if (
+            routeName === 'Chat' ||
+            routeName === 'Add_Contact' ||
+            routeName === 'AudioCallScreen'
+          ) {
+            return {display: 'none'};
+          }
+          return {
+            height: 60,
+            borderRadius: 30,
+            marginHorizontal: 20,
+            marginBottom: 18,
+            position: 'absolute',
+            backgroundColor: '#D9D9D9',
+            elevation: 5,
+          };
+        })(),
+      })}
     />
     <Tab.Screen
       name="Settings"
@@ -114,15 +129,41 @@ const TabNavigator = () => (
 const AppContent = () => {
   const {user, loading} = useContext(AuthContext);
   const db = getFirestore();
+  const navigationRef = useRef();
 
   useEffect(() => {
-    // This function handles the actual DB update
+    if (!user) return;
+
+    const unsubscribeCall = onSnapshot(
+      doc(db, 'calls', user.uid),
+      snapshot => {
+        if (snapshot && snapshot.exists()) {
+          const callData = snapshot.data();
+          if (callData && callData.status === 'dialing') {
+            navigationRef.current?.navigate('AudioCallScreen', {
+              friendId: callData.callerId,
+              friendName: callData.callerName,
+              profilePic: callData.callerPic,
+              isCaller: false,
+              callId: callData.callId,
+              myId: user.uid,
+            });
+          }
+        }
+      },
+      error => {
+        console.error('Call listener error:', error);
+      },
+    );
+
+    return () => unsubscribeCall();
+  }, [user]);
+
+  useEffect(() => {
     const updateStatus = async status => {
-      // 1. Get the very latest auth state directly from Firebase
       const auth = getAuth();
       const currentUser = auth.currentUser;
 
-      // 2. Only proceed if the user is actually logged in
       if (currentUser?.uid) {
         try {
           const userRef = doc(db, 'users', currentUser.uid);
@@ -132,7 +173,6 @@ const AppContent = () => {
           });
           console.log(`Status updated to: ${status}`);
         } catch (error) {
-          // This will now only catch REAL errors, not "logged out" errors
           if (error.code !== 'firestore/permission-denied') {
             console.error('Error updating status:', error);
           }
@@ -140,7 +180,6 @@ const AppContent = () => {
       }
     };
 
-    // Set online when user logs in or app opens
     if (user) {
       updateStatus('online');
     }
@@ -150,7 +189,6 @@ const AppContent = () => {
         if (nextAppState === 'active') {
           updateStatus('online');
         } else {
-          // background or inactive
           updateStatus('offline');
         }
       }
@@ -158,12 +196,11 @@ const AppContent = () => {
 
     return () => {
       subscription.remove();
-      // Only try to set offline if we still have a user session
       if (user) {
         updateStatus('offline');
       }
     };
-  }, [user]); // Re-run when user changes
+  }, [user]);
 
   useEffect(() => {
     GoogleSignin.configure({
@@ -185,7 +222,7 @@ const AppContent = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       {user ? (
         <Drawer.Navigator
           screenOptions={{

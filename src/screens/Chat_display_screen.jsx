@@ -114,6 +114,31 @@ const Chat_display_screen = ({navigation, route}) => {
     return () => unsubscribe();
   }, [chatId]);
 
+  const handleAudioCall = async () => {
+    if (!friendId || !user) return;
+    const callId = Date.now().toString();
+    try {
+      await setDoc(doc(db, 'calls', friendId), {
+        callerId: user.uid,
+        callerName: user.displayName || 'Friend',
+        callerPic: user.photoURL || '',
+        status: 'dialing',
+        type: 'audio',
+        callId: callId,
+        createdAt: serverTimestamp(),
+      });
+      navigation.navigate('AudioCallScreen', {
+        friendId,
+        friendName,
+        profilePic: initialProfilePic,
+        isCaller: true,
+        callId,
+      });
+    } catch (error) {
+      Alert.alert('Error', 'Could not start call');
+    }
+  };
+
   const sendMessage = async () => {
     if (messageText.trim().length === 0 || !chatId) return;
     Animated.sequence([
@@ -322,8 +347,10 @@ const Chat_display_screen = ({navigation, route}) => {
             </TouchableOpacity>
           ) : (
             <>
-              <TouchableOpacity style={styles.call_icon}>
-                <Icon name="call-outline" size={37} color="black" />
+              <TouchableOpacity
+                style={styles.call_icon}
+                onPress={handleAudioCall}>
+                <Icon name="call-outline" size={37} color="#510DC0" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowProfileModal(true)}>
                 <Image source={displayImage} style={styles.image} />
