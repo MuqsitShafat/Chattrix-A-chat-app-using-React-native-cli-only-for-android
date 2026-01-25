@@ -62,20 +62,21 @@ const Chat_display_screen = ({navigation, route}) => {
         exitSelection();
         return true;
       }
-      return false;
+      navigation.goBack();
+      return true;
     };
     const backHandler = BackHandler.addEventListener(
       'hardwareBackPress',
       backAction,
     );
     return () => backHandler.remove();
-  }, [isSelectionMode, showProfileModal]);
+  }, [isSelectionMode, showProfileModal, navigation]);
 
   useEffect(() => {
     if (!friendId) return;
     const userRef = doc(db, 'users', friendId);
     const unsubscribe = onSnapshot(userRef, documentSnapshot => {
-      if (documentSnapshot.exists()) {
+      if (documentSnapshot && documentSnapshot.exists()) {
         const data = documentSnapshot.data();
         if (data.status === 'online') {
           setOnlineStatus('Online');
@@ -114,27 +115,28 @@ const Chat_display_screen = ({navigation, route}) => {
     return () => unsubscribe();
   }, [chatId]);
 
+  // FIX: REWRITTEN CALL LOGIC
   const handleAudioCall = async () => {
     if (!friendId || !user) return;
-    const callId = Date.now().toString();
     try {
+      // We name the document 'friendId' because the friend's App.jsx
+      // is listening for a document named after their own UID.
       await setDoc(doc(db, 'calls', friendId), {
         callerId: user.uid,
-        callerName: user.displayName || 'Friend',
+        callerName: user.displayName || 'Chattrix User',
         callerPic: user.photoURL || '',
+        receiverId: friendId,
+        receiverName: friendName,
+        receiverPic: initialProfilePic || '',
         status: 'dialing',
         type: 'audio',
-        callId: callId,
         createdAt: serverTimestamp(),
       });
-      navigation.navigate('AudioCallScreen', {
-        friendId,
-        friendName,
-        profilePic: initialProfilePic,
-        isCaller: true,
-        callId,
-      });
+
+      // NOTE: DO NOT use navigation.navigate here.
+      // Your App.jsx listener will detect this new document and show the Modal.
     } catch (error) {
+      console.error(error);
       Alert.alert('Error', 'Could not start call');
     }
   };

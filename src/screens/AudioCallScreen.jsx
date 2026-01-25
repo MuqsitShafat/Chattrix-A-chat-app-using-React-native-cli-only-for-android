@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState} from 'react';
 import {
   View,
   Text,
@@ -6,214 +6,166 @@ import {
   Image,
   TouchableOpacity,
   SafeAreaView,
-  StatusBar,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-import {
-  getFirestore,
-  doc,
-  deleteDoc,
-  onSnapshot,
-  updateDoc,
-  collection,
-  addDoc,
-  serverTimestamp,
-} from '@react-native-firebase/firestore';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import {getFirestore, doc, deleteDoc} from '@react-native-firebase/firestore';
 
-const AudioCallScreen = ({navigation, route}) => {
-  const {friendId, friendName, profilePic, isCaller, callId, myId} =
-    route.params;
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeaker, setIsSpeaker] = useState(false);
-  const [callStatus, setCallStatus] = useState(
-    isCaller ? 'Calling...' : 'Ringing...',
-  );
+const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
+  const callData = route?.params;
 
-  const callDocId = isCaller ? friendId : myId;
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState(false);
 
-  
-
-  useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, 'calls', callDocId), snapshot => {
-      if (!snapshot.exists()) {
-        navigation.goBack();
-      } else {
-        const data = snapshot.data();
-        if (data.status === 'active') {
-          setCallStatus('00:00');
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleHangUp = async () => {
-    try {
-      await addDoc(collection(db, 'calls'), {
-        userId: myId,
-        friendId: friendId,
-        name: friendName,
-        status: callStatus === '00:00' ? 'Connected' : 'Missed',
-        timestamp: serverTimestamp(),
-        time: new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      });
-
-      await deleteDoc(doc(db, 'calls', callDocId));
-      navigation.goBack();
-    } catch (error) {
-      navigation.goBack();
-    }
-  };
-
-  const handleAccept = async () => {
-    try {
-      await updateDoc(doc(db, 'calls', callDocId), {
-        status: 'active',
-      });
-    } catch (error) {
-      console.error('Failed to accept call', error);
-    }
-  };
-
-  let photoUrl = profilePic;
-  if (photoUrl && typeof photoUrl === 'string') {
-    if (photoUrl.includes('googleusercontent.com')) {
-      photoUrl = photoUrl.replace('s96-c', 's400-c');
-    } else if (photoUrl.includes('facebook.com')) {
-      photoUrl = `${photoUrl}?type=large`;
-    }
+  if (!callData) {
+    return (
+      <View style={[styles.container, {justifyContent: 'center'}]}>
+        <Text style={{color: 'white'}}>Connecting...</Text>
+      </View>
+    );
   }
 
-  const displayImage =
-    photoUrl && photoUrl !== ''
-      ? {uri: photoUrl}
-      : require('../images/User_profile_icon.jpg');
+  const isCaller = callData.callerId === myId;
+  const aliasName = isCaller ? callData.receiverName : callData.callerName;
+  const profilePic = isCaller ? callData.receiverPic : callData.callerPic;
+
+  const handleHangup = async () => {
+    try {
+      // FIX: Matches the listener in App.jsx
+      const docId = callData.id || myId;
+      await deleteDoc(doc(db, 'calls', docId));
+    } catch (e) {
+      console.error('Error ending call:', e);
+    }
+  };
+
+  const displayImage = profilePic
+    ? {uri: profilePic}
+    : require('../images/User_profile_icon.jpg');
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#121b22" />
-
       <View style={styles.topSection}>
-        <Icon name="lock-closed" size={12} color="#85959f" />
-        <Text style={styles.encryptText}> End-to-end encrypted</Text>
-      </View>
-
-      <View style={styles.userInfo}>
-        <Text style={styles.userName}>{friendName}</Text>
-        <Text style={styles.callStatus}>{callStatus}</Text>
+        <Text style={styles.nameText}>{aliasName || 'Chattrix User'}</Text>
+        <Text style={styles.statusText}>In Progress...</Text>
       </View>
 
       <View style={styles.imageContainer}>
-        <View style={styles.imageWrapper}>
-          <Image source={displayImage} style={styles.profileImg} />
-        </View>
+        <Image source={displayImage} style={styles.profileImage} />
       </View>
 
-      <View style={styles.bottomControls}>
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={[styles.iconBtn, isSpeaker && styles.activeBtn]}
-            onPress={() => setIsSpeaker(!isSpeaker)}>
-            <Icon
-              name={isSpeaker ? 'volume-high' : 'volume-medium-outline'}
+      <View style={styles.controls}>
+        {/* Speaker */}
+        <TouchableOpacity
+          style={styles.iconBtnContainer}
+          onPress={() => setIsSpeakerOn(!isSpeakerOn)}>
+          <View style={[styles.iconBtn, isSpeakerOn && styles.activeBtn]}>
+            <Ionicons
+              name={isSpeakerOn ? 'volume-high' : 'volume-high-outline'}
               size={28}
-              color={isSpeaker ? 'black' : 'white'}
+              color={isSpeakerOn ? 'black' : 'white'}
             />
-          </TouchableOpacity>
+          </View>
+          <Text style={styles.btnLabel}>Speaker</Text>
+        </TouchableOpacity>
 
-          {!isCaller && callStatus === 'Ringing...' && (
-            <TouchableOpacity style={styles.acceptBtn} onPress={handleAccept}>
-              <Icon name="call" size={28} color="white" />
-            </TouchableOpacity>
-          )}
+        {/* Video Toggle (New) */}
+        <TouchableOpacity
+          style={styles.iconBtnContainer}
+          onPress={() => setIsVideoOn(!isVideoOn)}>
+          <View style={[styles.iconBtn, isVideoOn && styles.activeBtn]}>
+            <Ionicons
+              name={isVideoOn ? 'videocam' : 'videocam-outline'}
+              size={28}
+              color={isVideoOn ? 'black' : 'white'}
+            />
+          </View>
+          <Text style={styles.btnLabel}>Video</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.iconBtn, isMuted && styles.activeBtn]}
-            onPress={() => setIsMuted(!isMuted)}>
-            <Icon
+        {/* Mute */}
+        <TouchableOpacity
+          style={styles.iconBtnContainer}
+          onPress={() => setIsMuted(!isMuted)}>
+          <View style={[styles.iconBtn, isMuted && styles.activeBtn]}>
+            <Ionicons
               name={isMuted ? 'mic-off' : 'mic-outline'}
               size={28}
               color={isMuted ? 'black' : 'white'}
             />
-          </TouchableOpacity>
+          </View>
+          <Text style={styles.btnLabel}>Mute</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity style={styles.hangUpBtn} onPress={handleHangUp}>
-            <Icon
-              name="call"
-              size={28}
-              color="white"
-              style={{transform: [{rotate: '135deg'}]}}
-            />
-          </TouchableOpacity>
-        </View>
+        {/* Minimize */}
+        <TouchableOpacity style={styles.iconBtnContainer} onPress={onMinimize}>
+          <View style={styles.iconBtn}>
+            <MaterialIcons name="fullscreen-exit" size={28} color="white" />
+          </View>
+          <Text style={styles.btnLabel}>Minimize</Text>
+        </TouchableOpacity>
+
+        {/* Hangup */}
+        <TouchableOpacity
+          style={styles.hangupBtnContainer}
+          onPress={handleHangup}>
+          <View style={styles.hangupBtn}>
+            <MaterialIcons name="call-end" size={35} color="white" />
+          </View>
+          <Text style={styles.btnLabel}>End</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#121b22'},
-  topSection: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+  container: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 20,
   },
-  encryptText: {color: '#85959f', fontSize: 12},
-  userInfo: {alignItems: 'center', marginTop: 40},
-  userName: {color: 'white', fontSize: 32, fontWeight: '500'},
-  callStatus: {color: '#85959f', fontSize: 18, marginTop: 8},
-  imageContainer: {flex: 1, justifyContent: 'center', alignItems: 'center'},
-  imageWrapper: {
+  topSection: {marginTop: 60, alignItems: 'center'},
+  nameText: {fontSize: 32, color: 'white', fontWeight: 'bold'},
+  statusText: {fontSize: 18, color: '#bbb', marginTop: 10},
+  imageContainer: {
     width: 200,
     height: 200,
     borderRadius: 100,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#232d36',
+    borderWidth: 2,
+    borderColor: '#333',
   },
-  profileImg: {width: '100%', height: '100%'},
-  bottomControls: {
-    backgroundColor: '#1f2c34',
-    height: 150,
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    justifyContent: 'center',
-  },
-  buttonRow: {
+  profileImage: {width: '100%', height: '100%'},
+  controls: {
     flexDirection: 'row',
+    width: '100%',
     justifyContent: 'space-evenly',
-    alignItems: 'center',
+    marginBottom: 40,
+    flexWrap: 'wrap',
   },
+  iconBtnContainer: {alignItems: 'center', width: 70, marginBottom: 20},
   iconBtn: {
     width: 55,
     height: 55,
-    borderRadius: 30,
-    backgroundColor: '#232d36',
+    borderRadius: 28,
+    backgroundColor: '#333',
     alignItems: 'center',
     justifyContent: 'center',
   },
   activeBtn: {backgroundColor: 'white'},
-  acceptBtn: {
-    width: 65,
-    height: 65,
-    borderRadius: 35,
-    backgroundColor: '#25D366',
+  hangupBtn: {
+    backgroundColor: '#ff3b30',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  hangUpBtn: {
-    width: 65,
-    height: 65,
-    borderRadius: 35,
-    backgroundColor: '#f54242',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  btnLabel: {color: 'white', marginTop: 8, fontSize: 11, textAlign: 'center'},
 });
 
 export default AudioCallScreen;

@@ -3,8 +3,9 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Main_screen from '../screens/Main_screen';
 import Chat_display_screen from '../screens/Chat_display_screen';
 import ContactInfo_screen from '../screens/Contactinfo';
-import AudioCallScreen from '../screens/AudioCallScreen';
+
 const Stack = createNativeStackNavigator();
+
 const Home_Chat_navigator = () => {
   return (
     <Stack.Navigator 
@@ -15,9 +16,8 @@ const Home_Chat_navigator = () => {
       <Stack.Screen name="Home" component={Main_screen} />
       <Stack.Screen name="Chat" component={Chat_display_screen} />
       <Stack.Screen name="Add_Contact" component={ContactInfo_screen} />
-      <Stack.Screen name="AudioCallScreen" component={AudioCallScreen} />
     </Stack.Navigator>
   )
 }
 
-export default Home_Chat_navigator
+export default Home_Chat_navigator;

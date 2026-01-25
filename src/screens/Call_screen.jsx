@@ -8,7 +8,7 @@ import {
   StatusBar,
   BackHandler,
 } from 'react-native';
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useRef} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import LottieView from 'lottie-react-native';
@@ -23,7 +23,7 @@ import {
   onSnapshot,
   writeBatch,
   doc,
-  serverTimestamp,
+  getDoc,
 } from '@react-native-firebase/firestore';
 
 const Call_screen = ({navigation}) => {
@@ -32,40 +32,89 @@ const Call_screen = ({navigation}) => {
   const [loading, setLoading] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
+  
+  const isMounted = useRef(true);
 
   const auth = getAuth();
   const db = getFirestore();
   const user = auth.currentUser;
 
   useEffect(() => {
+    isMounted.current = true;
     if (!user) return;
 
     const callsQuery = query(
-      collection(db, 'calls'),
+      collection(db, 'call_history'),
       where('userId', '==', user.uid),
       orderBy('timestamp', 'desc'),
     );
 
     const unsubscribe = onSnapshot(
       callsQuery,
-      querySnapshot => {
+      async querySnapshot => {
+        if (!isMounted.current) return;
+        
         const calls = [];
-        querySnapshot.forEach(documentSnapshot => {
-          calls.push({
-            ...documentSnapshot.data(),
+        
+        // We must map the IDs to real Names and readable Times
+        const promises = querySnapshot.docs.map(async (documentSnapshot) => {
+          const callData = documentSnapshot.data();
+          
+          // 1. Format the Timestamp into a readable Time string
+          let readableTime = '';
+          if (callData.timestamp) {
+            const date = callData.timestamp.toDate();
+            readableTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
+
+          // 2. Fetch the Alias Name from the users -> contacts subcollection
+          let displayName = 'Unknown';
+          try {
+            // Looking specifically for the 'aliasName' field from your screenshot
+            const contactRef = doc(db, 'users', user.uid, 'contacts', callData.friendId);
+            const contactSnap = await getDoc(contactRef);
+            
+            if (contactSnap.exists()) {
+              displayName = contactSnap.data().aliasName || contactSnap.data().originalName || 'User';
+            } else {
+              // Fallback: Check general users collection if not in contacts
+              const userRef = doc(db, 'users', callData.friendId);
+              const userSnap = await getDoc(userRef);
+              if (userSnap.exists()) {
+                displayName = userSnap.data().name || 'User';
+              }
+            }
+          } catch (e) {
+            console.log("Error fetching name:", e);
+          }
+
+          return {
+            ...callData,
             id: documentSnapshot.id,
-          });
+            name: displayName, // Map to your UI's {item.name}
+            time: readableTime, // Map to your UI's {item.time}
+          };
         });
-        setData(calls);
-        setLoading(false);
+
+        const resolvedCalls = await Promise.all(promises);
+        
+        if (isMounted.current) {
+          setData(resolvedCalls);
+          setLoading(false);
+        }
       },
       error => {
-        console.error('Firestore Error: ', error);
+        if (error.code !== 'firestore/permission-denied') {
+            console.error('Firestore Error: ', error);
+        }
         setLoading(false);
       },
     );
 
-    return () => unsubscribe();
+    return () => {
+        isMounted.current = false;
+        unsubscribe();
+    };
   }, [user]);
 
   const deleteSelected = async () => {
@@ -73,7 +122,7 @@ const Call_screen = ({navigation}) => {
       const batch = writeBatch(db);
 
       selectedItems.forEach(itemId => {
-        const docRef = doc(db, 'calls', itemId);
+        const docRef = doc(db, 'call_history', itemId);
         batch.delete(docRef);
       });
 
@@ -201,9 +250,9 @@ const Call_screen = ({navigation}) => {
                       {item.name}
                     </Text>
                   </View>
-                  <View style={styles.iconContainer}>
+                  <TouchableOpacity style={styles.iconContainer}>
                     <Icon name="call-outline" size={30} color="#4175DF" />
-                  </View>
+                  </TouchableOpacity>
                   <View style={styles.timeContainer}>
                     <Text style={styles.user_time}>{item.time}</Text>
                   </View>

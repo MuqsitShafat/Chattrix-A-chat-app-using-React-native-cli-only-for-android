@@ -1,6 +1,6 @@
 import './src/i18n/i18n';
-import React, {useEffect, useContext, useRef} from 'react';
-import {AppState} from 'react-native';
+import React, {useEffect, useContext, useRef, useState} from 'react';
+import {AppState, View, Modal, Image} from 'react-native';
 import BootSplash from 'react-native-bootsplash';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {getAuth} from '@react-native-firebase/auth';
@@ -10,6 +10,9 @@ import {
   updateDoc,
   serverTimestamp,
   onSnapshot,
+  collection,
+  query,
+  where,
 } from '@react-native-firebase/firestore';
 
 import {
@@ -19,14 +22,14 @@ import {
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createDrawerNavigator} from '@react-navigation/drawer';
 import Icon from 'react-native-vector-icons/Ionicons';
-import {Image} from 'react-native';
 
 import Call_screen from './src/screens/Call_screen';
 import Home_Chat_navigator from './src/Navigation/Home_Chat_navigator';
 import SettingsNavigator from './src/Navigation/SettingsNavigation';
 import Custom_Drawer from './src/Navigation/Custom_Drawer';
 import AuthStack from './src/Navigation/AuthStack';
-
+import ActiveCallBar_at_top from './src/screens/ActiveCallBar_at_top';
+import AudioCallScreen from './src/screens/AudioCallScreen';
 import {AuthProvider, AuthContext} from './src/Auth/AuthContext';
 
 const Tab = createBottomTabNavigator();
@@ -130,40 +133,71 @@ const AppContent = () => {
   const {user, loading} = useContext(AuthContext);
   const db = getFirestore();
   const navigationRef = useRef();
+  const [activeCall, setActiveCall] = useState(null);
+  const [isMinimized, setIsMinimized] = useState(false);
 
+  // MANAGE CALL LISTENERS
   useEffect(() => {
-    if (!user) return;
+    // If user logs out, clear everything and stop listeners
+    if (!user) {
+      setActiveCall(null);
+      setIsMinimized(false);
+      return;
+    }
 
-    const unsubscribeCall = onSnapshot(
+    let unsubscribeOutbound = null;
+
+    // 1. Listen for Inbound Calls
+    const unsubscribeInbound = onSnapshot(
       doc(db, 'calls', user.uid),
       snapshot => {
+        // SAFETY: Only proceed if user is still logged in
+        if (!user) return;
+
         if (snapshot && snapshot.exists()) {
           const callData = snapshot.data();
-          if (callData && callData.status === 'dialing') {
-            navigationRef.current?.navigate('AudioCallScreen', {
-              friendId: callData.callerId,
-              friendName: callData.callerName,
-              profilePic: callData.callerPic,
-              isCaller: false,
-              callId: callData.callId,
-              myId: user.uid,
-            });
-          }
+          setActiveCall({...callData, id: user.uid});
+        } else {
+          // 2. Check for Outbound Calls if no inbound exists
+          const q = query(
+            collection(db, 'calls'),
+            where('callerId', '==', user.uid),
+          );
+
+          // Clear previous outbound listener if it exists
+          if (unsubscribeOutbound) unsubscribeOutbound();
+
+          unsubscribeOutbound = onSnapshot(
+            q,
+            querySnap => {
+              // SAFETY: Added check for querySnap existence AND user existence
+              if (user && querySnap && !querySnap.empty) {
+                const outboundData = querySnap.docs[0].data();
+                setActiveCall({...outboundData, id: querySnap.docs[0].id});
+              } else {
+                setActiveCall(null);
+                setIsMinimized(false);
+              }
+            },
+            error => console.log('Outbound Error:', error),
+          );
         }
       },
-      error => {
-        console.error('Call listener error:', error);
-      },
+      error => console.log('Inbound Error:', error),
     );
 
-    return () => unsubscribeCall();
+    // CLEANUP: Kill all listeners when user logs out or component unmounts
+    return () => {
+      unsubscribeInbound();
+      if (unsubscribeOutbound) unsubscribeOutbound();
+    };
   }, [user]);
 
+  // MANAGE ONLINE STATUS
   useEffect(() => {
     const updateStatus = async status => {
       const auth = getAuth();
       const currentUser = auth.currentUser;
-
       if (currentUser?.uid) {
         try {
           const userRef = doc(db, 'users', currentUser.uid);
@@ -171,7 +205,6 @@ const AppContent = () => {
             status: status,
             lastSeen: serverTimestamp(),
           });
-          console.log(`Status updated to: ${status}`);
         } catch (error) {
           if (error.code !== 'firestore/permission-denied') {
             console.error('Error updating status:', error);
@@ -180,25 +213,19 @@ const AppContent = () => {
       }
     };
 
-    if (user) {
-      updateStatus('online');
-    }
+    if (user) updateStatus('online');
 
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (user) {
-        if (nextAppState === 'active') {
-          updateStatus('online');
-        } else {
-          updateStatus('offline');
-        }
+        updateStatus(nextAppState === 'active' ? 'online' : 'offline');
       }
     });
 
     return () => {
       subscription.remove();
-      if (user) {
-        updateStatus('offline');
-      }
+      // Only try to set offline if we actually have a user
+      const auth = getAuth();
+      if (auth.currentUser) updateStatus('offline');
     };
   }, [user]);
 
@@ -208,50 +235,72 @@ const AppContent = () => {
         '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
       offlineAccess: true,
     });
+    BootSplash.hide({fade: true});
   }, []);
 
-  useEffect(() => {
-    const init = async () => {};
-    init().finally(async () => {
-      await BootSplash.hide({fade: true});
-    });
-  }, []);
+  if (loading) return null;
 
-  if (loading) {
-    return null;
-  }
+  const showFullCall = !!(user && activeCall && !isMinimized);
+  const showBar = !!(user && activeCall && isMinimized);
 
   return (
     <NavigationContainer ref={navigationRef}>
       {user ? (
-        <Drawer.Navigator
-          screenOptions={{
-            headerShown: false,
-            drawerStyle: {
-              width: '78%',
-              backgroundColor: '#D9D9D9',
-            },
-            drawerLabelStyle: {
-              fontSize: 32,
-              color: 'white',
-              fontFamily: 'IrishGrover-Regular',
-              height: 50,
-              marginHorizontal: 10,
-            },
-            drawerActiveBackgroundColor: '#510DC0',
-          }}
-          drawerContent={props => <Custom_Drawer {...props} />}>
-          <Drawer.Screen
-            name="Tabs"
-            component={TabNavigator}
-            options={{
-              drawerIcon: () => (
-                <Image source={require('./src/images/Homeicon.png')} />
-              ),
-              drawerLabel: 'Home',
+        <View style={{flex: 1}}>
+          <Drawer.Navigator
+            screenOptions={{
+              headerShown: false,
+              drawerStyle: {width: '78%', backgroundColor: '#D9D9D9'},
+              drawerLabelStyle: {
+                fontSize: 32,
+                color: 'white',
+                fontFamily: 'IrishGrover-Regular',
+                height: 50,
+                marginHorizontal: 10,
+              },
+              drawerActiveBackgroundColor: '#510DC0',
             }}
-          />
-        </Drawer.Navigator>
+            drawerContent={props => <Custom_Drawer {...props} />}>
+            <Drawer.Screen
+              name="Tabs"
+              component={TabNavigator}
+              options={{
+                drawerIcon: () => (
+                  <Image source={require('./src/images/Homeicon.png')} />
+                ),
+                drawerLabel: 'Home',
+              }}
+            />
+          </Drawer.Navigator>
+
+          {/* FULL SCREEN MODAL */}
+          <Modal
+            visible={showFullCall}
+            animationType="slide"
+            transparent={false}
+            onRequestClose={() => setIsMinimized(true)}>
+            {/* Guard: AudioCallScreen ONLY renders if we have call data */}
+            {activeCall ? (
+              <AudioCallScreen
+                route={{params: activeCall}}
+                navigation={navigationRef.current}
+                onMinimize={() => setIsMinimized(true)}
+                myId={user.uid}
+              />
+            ) : (
+              <View />
+            )}
+          </Modal>
+
+          {/* FLOATING BAR */}
+          {showBar && activeCall && (
+            <ActiveCallBar_at_top
+              callData={activeCall}
+              myId={user.uid}
+              onPressBar={() => setIsMinimized(false)}
+            />
+          )}
+        </View>
       ) : (
         <AuthStack />
       )}
