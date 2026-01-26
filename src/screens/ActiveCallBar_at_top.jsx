@@ -2,24 +2,48 @@ import React, {useState} from 'react';
 import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {getFirestore, doc, deleteDoc} from '@react-native-firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  deleteDoc,
+  collection,
+  addDoc,
+  serverTimestamp,
+} from '@react-native-firebase/firestore';
 
 const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
   const db = getFirestore();
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isEnding, setIsEnding] = useState(false); // NEW: Prevent double clicks
 
   const handleHangup = async () => {
+    if (isEnding) return; // Exit if already processing
+    setIsEnding(true); // Disable immediately
+
     try {
-      // FIX: Always delete the document named after the Receiver's UID
-      // because that is what App.jsx is listening to.
       const docId = callData.id || myId;
+      const historyTimestamp = serverTimestamp();
+
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.callerId,
+        friendId: callData.receiverId,
+        type: 'outbound',
+        timestamp: historyTimestamp,
+      });
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.receiverId,
+        friendId: callData.callerId,
+        type: 'inbound',
+        timestamp: historyTimestamp,
+      });
+
       await deleteDoc(doc(db, 'calls', docId));
     } catch (e) {
       console.error('Error hanging up:', e);
+      setIsEnding(false); // Re-enable if there was a genuine error
     }
   };
-
   const aliasName =
     callData.callerId === myId ? callData.receiverName : callData.callerName;
 
@@ -28,7 +52,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       activeOpacity={0.9}
       onPress={onPressBar}
       style={styles.floatingBar}>
-      {/* Mute Toggle with Visual Feedback */}
       <TouchableOpacity
         onPress={() => setIsMuted(!isMuted)}
         style={styles.sideBtn}>
@@ -39,7 +62,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       </TouchableOpacity>
 
-      {/* Camera Toggle */}
       <TouchableOpacity
         onPress={() => setIsCameraOn(!isCameraOn)}
         style={styles.sideBtn}>
@@ -54,7 +76,8 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
 
       <TouchableOpacity
         onPress={handleHangup}
-        style={[styles.sideBtn, styles.redBtn]}>
+        disabled={isEnding} // Disable UI
+        style={[styles.sideBtn, styles.redBtn, isEnding && {opacity: 0.5}]}>
         <MaterialIcons name="call-end" size={24} color="white" />
       </TouchableOpacity>
     </TouchableOpacity>

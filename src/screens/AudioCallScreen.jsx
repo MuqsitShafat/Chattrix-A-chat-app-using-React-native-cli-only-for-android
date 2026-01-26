@@ -9,15 +9,23 @@ import {
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {getFirestore, doc, deleteDoc} from '@react-native-firebase/firestore';
-
+import {
+  getFirestore,
+  doc,
+  deleteDoc,
+  collection,
+  addDoc,
+  serverTimestamp,
+} from '@react-native-firebase/firestore';
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
   const callData = route?.params;
-  const initialProfilePic = callData.callerId === myId ? callData.receiverPic : callData.callerPic;
+  const initialProfilePic =
+    callData.callerId === myId ? callData.receiverPic : callData.callerPic;
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(false);
+  const [isEnding, setIsEnding] = useState(false); // NEW
 
   if (!callData) {
     return (
@@ -31,12 +39,31 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   const aliasName = isCaller ? callData.receiverName : callData.callerName;
 
   const handleHangup = async () => {
+    if (isEnding) return;
+    setIsEnding(true);
+
     try {
-      // FIX: Matches the listener in App.jsx
       const docId = callData.id || myId;
+      const historyTimestamp = serverTimestamp();
+
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.callerId,
+        friendId: callData.receiverId,
+        type: 'outbound',
+        timestamp: historyTimestamp,
+      });
+
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.receiverId,
+        friendId: callData.callerId,
+        type: 'inbound',
+        timestamp: historyTimestamp,
+      });
+
       await deleteDoc(doc(db, 'calls', docId));
     } catch (e) {
       console.error('Error ending call:', e);
+      setIsEnding(false);
     }
   };
 
@@ -114,14 +141,15 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           <Text style={styles.btnLabel}>Minimize</Text>
         </TouchableOpacity>
 
-        {/* Hangup */}
+        {/* Hangup Button Section */}
         <TouchableOpacity
           style={styles.hangupBtnContainer}
-          onPress={handleHangup}>
-          <View style={styles.hangupBtn}>
+          onPress={handleHangup}
+          disabled={isEnding}>
+          <View style={[styles.hangupBtn, isEnding && {opacity: 0.5}]}>
             <MaterialIcons name="call-end" size={35} color="white" />
           </View>
-          <Text style={styles.btnLabel}>End</Text>
+          <Text style={styles.btnLabel}>{isEnding ? 'Ending...' : 'End'}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

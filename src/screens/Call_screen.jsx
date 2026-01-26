@@ -7,8 +7,9 @@ import {
   FlatList,
   StatusBar,
   BackHandler,
+  Alert,
 } from 'react-native';
-import React, {useEffect, useState, useRef} from 'react';
+import React, {useEffect, useState, useRef, useContext} from 'react'; // Added useContext
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import LottieView from 'lottie-react-native';
@@ -24,7 +25,10 @@ import {
   writeBatch,
   doc,
   getDoc,
+  setDoc,
+  serverTimestamp,
 } from '@react-native-firebase/firestore';
+import {AuthContext} from '../Auth/AuthContext'; // Import AuthContext
 
 const Call_screen = ({navigation}) => {
   const {t} = useTranslation();
@@ -33,8 +37,10 @@ const Call_screen = ({navigation}) => {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
-  const isMounted = useRef(true);
+  // Use global activeCall from Context instead of local state
+  const {activeCall} = useContext(AuthContext);
 
+  const isMounted = useRef(true);
   const auth = getAuth();
   const db = getFirestore();
   const user = auth.currentUser;
@@ -102,16 +108,12 @@ const Call_screen = ({navigation}) => {
         });
 
         const resolvedCalls = await Promise.all(promises);
-
         if (isMounted.current) {
           setData(resolvedCalls);
           setLoading(false);
         }
       },
       error => {
-        if (error.code !== 'firestore/permission-denied') {
-          console.error('Firestore Error: ', error);
-        }
         setLoading(false);
       },
     );
@@ -121,6 +123,26 @@ const Call_screen = ({navigation}) => {
       unsubscribe();
     };
   }, [user]);
+
+  const handleHistoryCall = async (friendId, friendName) => {
+    if (!friendId || !user || activeCall) return;
+    try {
+      await setDoc(doc(db, 'calls', friendId), {
+        callerId: user.uid,
+        callerName: user.displayName || 'Chattrix User',
+        callerPic: user.photoURL || '',
+        receiverId: friendId,
+        receiverName: friendName,
+        receiverPic: '',
+        status: 'dialing',
+        type: 'audio',
+        createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error(error);
+      Alert.alert('Error', 'Could not start call');
+    }
+  };
 
   const deleteSelected = async () => {
     try {
@@ -219,7 +241,9 @@ const Call_screen = ({navigation}) => {
             style={styles.lottieStyle}
           />
           <Text style={styles.emptyText}>No call history found</Text>
-          <Text style={styles.subText}>Your recent calls will appear here</Text>
+          <Text style={styles.subText}>
+            Make calls to see your call history here.
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -248,12 +272,8 @@ const Call_screen = ({navigation}) => {
                     />
                   )}
 
-                  {/* LEFT SECTION: Name and Tilted Arrow */}
                   <View style={styles.nameContainer}>
-                    <Text
-                      style={styles.userName}
-                      numberOfLines={1}
-                      adjustsFontSizeToFit>
+                    <Text style={styles.userName} numberOfLines={1}>
                       {item.name}
                     </Text>
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
@@ -262,7 +282,7 @@ const Call_screen = ({navigation}) => {
                           isOutbound ? 'arrow-up-outline' : 'arrow-down-outline'
                         }
                         size={14}
-                        color={isOutbound ? '#FF3B30' : '#4CD964'}
+                        color={isOutbound ? '#4CD964' : '#FF3B30'}
                         style={styles.tiltedArrow}
                       />
                       <Text style={styles.directionText}>
@@ -271,14 +291,21 @@ const Call_screen = ({navigation}) => {
                     </View>
                   </View>
 
-                  {/* CENTER SECTION: Call Icon */}
                   <View style={styles.iconContainer}>
-                    <TouchableOpacity>
-                      <Icon name="call-outline" size={30} color="#4175DF" />
+                    <TouchableOpacity
+                      onPress={() =>
+                        handleHistoryCall(item.friendId, item.name)
+                      }
+                      disabled={!!activeCall}
+                      style={activeCall && {opacity: 0.6}}>
+                      <Icon
+                        name="call-outline"
+                        size={30}
+                        color={activeCall ? '#878787' : '#4175DF'}
+                      />
                     </TouchableOpacity>
                   </View>
 
-                  {/* RIGHT SECTION: Time */}
                   <View style={styles.timeContainer}>
                     <Text style={styles.user_time}>{item.time}</Text>
                   </View>
@@ -334,9 +361,8 @@ const styles = StyleSheet.create({
     marginBottom: '5%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between', // Ensures distribution
+    justifyContent: 'space-between',
   },
-  // Fixed centering: give equal flex to left and right so center stays center
   nameContainer: {flex: 1.5},
   iconContainer: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   timeContainer: {flex: 1.5, alignItems: 'flex-end'},
@@ -346,7 +372,6 @@ const styles = StyleSheet.create({
   select_all: {fontSize: 20, color: 'white', fontFamily: 'IrishGrover-Regular'},
   directionText: {fontSize: 12, color: 'gray', marginLeft: 4},
 
-  // Tilted towards 3rd quadrant (Down-Left)
   tiltedArrow: {
     transform: [{rotate: '45deg'}],
   },
@@ -368,7 +393,7 @@ const styles = StyleSheet.create({
   subText: {
     fontSize: 16,
     color: '#75926bff',
-    fontFamily: 'IrishGrover-Regular',
+    fontFamily: 'Milonga-Regular',
     marginTop: 5,
   },
 });

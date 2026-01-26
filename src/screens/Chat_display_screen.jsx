@@ -117,48 +117,33 @@ const Chat_display_screen = ({navigation, route}) => {
   }, [chatId]);
 
   // FIX: REWRITTEN CALL LOGIC
- const handleAudioCall = async () => {
-    if (!friendId || !user) return;
-    try {
-      // 1. Initiate the Active Call (Signals the friend's app to ring)
-      await setDoc(doc(db, 'calls', friendId), {
-        callerId: user.uid,
-        callerName: user.displayName || 'Chattrix User',
-        callerPic: user.photoURL || '',
-        receiverId: friendId,
-        receiverName: friendName,
-        receiverPic: initialProfilePic || '',
-        status: 'dialing',
-        type: 'audio',
-        createdAt: serverTimestamp(),
-      });
+// Optimized Call Logic for Chat Display
+const handleAudioCall = async () => {
+  if (!friendId || !user || activeCall) return;
 
-      // 2. SAVE HISTORY FOR BOTH USERS
-      const historyTimestamp = serverTimestamp();
+  try {
+    // 1. Initiate the Active Call Signal
+    // We only create the 'calls' document. 
+    // The history will be recorded by the Hangup function in the Call Screen.
+    await setDoc(doc(db, 'calls', friendId), {
+      callerId: user.uid,
+      callerName: user.displayName || 'Chattrix User',
+      callerPic: user.photoURL || '',
+      receiverId: friendId,
+      receiverName: friendName,
+      receiverPic: initialProfilePic || '',
+      status: 'dialing',
+      type: 'audio',
+      createdAt: serverTimestamp(), // Modular Firestore helper
+    });
 
-      // Save for ME (Caller - Outbound)
-      await addDoc(collection(db, 'call_history'), {
-        userId: user.uid,        // My ID
-        friendId: friendId,      // Friend's ID
-        type: 'outbound',        // I am calling out
-        timestamp: historyTimestamp,
-      });
-
-      // Save for FRIEND (Receiver - Inbound)
-      await addDoc(collection(db, 'call_history'), {
-        userId: friendId,        // Friend's ID
-        friendId: user.uid,      // My ID
-        type: 'inbound',         // They are receiving in
-        timestamp: historyTimestamp,
-      });
-
-      // NOTE: DO NOT use navigation.navigate here.
-      // Your App.jsx listener will detect the 'calls' document and show the Modal.
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Could not start call');
-    }
-  };
+    // Note: No need to navigate. Your App.jsx listener 
+    // handles showing the calling UI automatically.
+  } catch (error) {
+    console.error("Call Initiation Error:", error);
+    Alert.alert('Error', 'Could not start call');
+  }
+};
 
   const sendMessage = async () => {
     if (messageText.trim().length === 0 || !chatId) return;
