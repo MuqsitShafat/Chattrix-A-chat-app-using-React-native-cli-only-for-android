@@ -130,15 +130,13 @@ const TabNavigator = () => (
 );
 
 const AppContent = () => {
-  const {user, loading} = useContext(AuthContext);
+  // Use global context instead of local state
+  const {user, loading, activeCall, setActiveCall} = useContext(AuthContext);
   const db = getFirestore();
   const navigationRef = useRef();
-  const [activeCall, setActiveCall] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
 
-  // MANAGE CALL LISTENERS
   useEffect(() => {
-    // If user logs out, clear everything and stop listeners
     if (!user) {
       setActiveCall(null);
       setIsMinimized(false);
@@ -147,30 +145,25 @@ const AppContent = () => {
 
     let unsubscribeOutbound = null;
 
-    // 1. Listen for Inbound Calls
     const unsubscribeInbound = onSnapshot(
       doc(db, 'calls', user.uid),
       snapshot => {
-        // SAFETY: Only proceed if user is still logged in
         if (!user) return;
 
         if (snapshot && snapshot.exists()) {
           const callData = snapshot.data();
           setActiveCall({...callData, id: user.uid});
         } else {
-          // 2. Check for Outbound Calls if no inbound exists
           const q = query(
             collection(db, 'calls'),
             where('callerId', '==', user.uid),
           );
 
-          // Clear previous outbound listener if it exists
           if (unsubscribeOutbound) unsubscribeOutbound();
 
           unsubscribeOutbound = onSnapshot(
             q,
             querySnap => {
-              // SAFETY: Added check for querySnap existence AND user existence
               if (user && querySnap && !querySnap.empty) {
                 const outboundData = querySnap.docs[0].data();
                 setActiveCall({...outboundData, id: querySnap.docs[0].id});
@@ -186,14 +179,12 @@ const AppContent = () => {
       error => console.log('Inbound Error:', error),
     );
 
-    // CLEANUP: Kill all listeners when user logs out or component unmounts
     return () => {
       unsubscribeInbound();
       if (unsubscribeOutbound) unsubscribeOutbound();
     };
   }, [user]);
 
-  // MANAGE ONLINE STATUS
   useEffect(() => {
     const updateStatus = async status => {
       const auth = getAuth();
@@ -223,7 +214,6 @@ const AppContent = () => {
 
     return () => {
       subscription.remove();
-      // Only try to set offline if we actually have a user
       const auth = getAuth();
       if (auth.currentUser) updateStatus('offline');
     };
@@ -273,13 +263,11 @@ const AppContent = () => {
             />
           </Drawer.Navigator>
 
-          {/* FULL SCREEN MODAL */}
           <Modal
             visible={showFullCall}
             animationType="slide"
             transparent={false}
             onRequestClose={() => setIsMinimized(true)}>
-            {/* Guard: AudioCallScreen ONLY renders if we have call data */}
             {activeCall ? (
               <AudioCallScreen
                 route={{params: activeCall}}
@@ -292,7 +280,6 @@ const AppContent = () => {
             )}
           </Modal>
 
-          {/* FLOATING BAR */}
           {showBar && activeCall && (
             <ActiveCallBar_at_top
               callData={activeCall}

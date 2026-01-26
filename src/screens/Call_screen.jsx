@@ -32,7 +32,7 @@ const Call_screen = ({navigation}) => {
   const [loading, setLoading] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
-  
+
   const isMounted = useRef(true);
 
   const auth = getAuth();
@@ -53,31 +53,36 @@ const Call_screen = ({navigation}) => {
       callsQuery,
       async querySnapshot => {
         if (!isMounted.current) return;
-        
-        const calls = [];
-        
-        // We must map the IDs to real Names and readable Times
-        const promises = querySnapshot.docs.map(async (documentSnapshot) => {
+
+        const promises = querySnapshot.docs.map(async documentSnapshot => {
           const callData = documentSnapshot.data();
-          
-          // 1. Format the Timestamp into a readable Time string
+
           let readableTime = '';
           if (callData.timestamp) {
             const date = callData.timestamp.toDate();
-            readableTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            readableTime = date.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            });
           }
 
-          // 2. Fetch the Alias Name from the users -> contacts subcollection
           let displayName = 'Unknown';
           try {
-            // Looking specifically for the 'aliasName' field from your screenshot
-            const contactRef = doc(db, 'users', user.uid, 'contacts', callData.friendId);
+            const contactRef = doc(
+              db,
+              'users',
+              user.uid,
+              'contacts',
+              callData.friendId,
+            );
             const contactSnap = await getDoc(contactRef);
-            
+
             if (contactSnap.exists()) {
-              displayName = contactSnap.data().aliasName || contactSnap.data().originalName || 'User';
+              displayName =
+                contactSnap.data().aliasName ||
+                contactSnap.data().originalName ||
+                'User';
             } else {
-              // Fallback: Check general users collection if not in contacts
               const userRef = doc(db, 'users', callData.friendId);
               const userSnap = await getDoc(userRef);
               if (userSnap.exists()) {
@@ -85,19 +90,19 @@ const Call_screen = ({navigation}) => {
               }
             }
           } catch (e) {
-            console.log("Error fetching name:", e);
+            console.log('Error fetching name:', e);
           }
 
           return {
             ...callData,
             id: documentSnapshot.id,
-            name: displayName, // Map to your UI's {item.name}
-            time: readableTime, // Map to your UI's {item.time}
+            name: displayName,
+            time: readableTime,
           };
         });
 
         const resolvedCalls = await Promise.all(promises);
-        
+
         if (isMounted.current) {
           setData(resolvedCalls);
           setLoading(false);
@@ -105,27 +110,25 @@ const Call_screen = ({navigation}) => {
       },
       error => {
         if (error.code !== 'firestore/permission-denied') {
-            console.error('Firestore Error: ', error);
+          console.error('Firestore Error: ', error);
         }
         setLoading(false);
       },
     );
 
     return () => {
-        isMounted.current = false;
-        unsubscribe();
+      isMounted.current = false;
+      unsubscribe();
     };
   }, [user]);
 
   const deleteSelected = async () => {
     try {
       const batch = writeBatch(db);
-
       selectedItems.forEach(itemId => {
         const docRef = doc(db, 'call_history', itemId);
         batch.delete(docRef);
       });
-
       await batch.commit();
       setSelectedItems([]);
       setSelectionMode(false);
@@ -225,6 +228,8 @@ const Call_screen = ({navigation}) => {
           contentContainerStyle={styles.listPadding}
           renderItem={({item}) => {
             const isSelected = selectedItems.includes(item.id);
+            const isOutbound = item.type === 'outbound';
+
             return (
               <TouchableOpacity
                 onLongPress={() => onLongPressItem(item.id)}
@@ -242,6 +247,8 @@ const Call_screen = ({navigation}) => {
                       style={{marginRight: 10}}
                     />
                   )}
+
+                  {/* LEFT SECTION: Name and Tilted Arrow */}
                   <View style={styles.nameContainer}>
                     <Text
                       style={styles.userName}
@@ -249,10 +256,29 @@ const Call_screen = ({navigation}) => {
                       adjustsFontSizeToFit>
                       {item.name}
                     </Text>
+                    <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                      <Icon
+                        name={
+                          isOutbound ? 'arrow-up-outline' : 'arrow-down-outline'
+                        }
+                        size={14}
+                        color={isOutbound ? '#FF3B30' : '#4CD964'}
+                        style={styles.tiltedArrow}
+                      />
+                      <Text style={styles.directionText}>
+                        {isOutbound ? 'Outbound' : 'Inbound'}
+                      </Text>
+                    </View>
                   </View>
-                  <TouchableOpacity style={styles.iconContainer}>
-                    <Icon name="call-outline" size={30} color="#4175DF" />
-                  </TouchableOpacity>
+
+                  {/* CENTER SECTION: Call Icon */}
+                  <View style={styles.iconContainer}>
+                    <TouchableOpacity>
+                      <Icon name="call-outline" size={30} color="#4175DF" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* RIGHT SECTION: Time */}
                   <View style={styles.timeContainer}>
                     <Text style={styles.user_time}>{item.time}</Text>
                   </View>
@@ -308,13 +334,23 @@ const styles = StyleSheet.create({
     marginBottom: '5%',
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between', // Ensures distribution
   },
-  nameContainer: {flex: 1},
-  iconContainer: {flex: 1, alignItems: 'center'},
-  timeContainer: {flex: 1, alignItems: 'flex-end'},
-  userName: {fontSize: 25, color: 'black', fontFamily: 'IrishGrover-Regular'},
-  user_time: {fontSize: 20, color: 'black', fontFamily: 'IrishGrover-Regular'},
+  // Fixed centering: give equal flex to left and right so center stays center
+  nameContainer: {flex: 1.5},
+  iconContainer: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  timeContainer: {flex: 1.5, alignItems: 'flex-end'},
+
+  userName: {fontSize: 22, color: 'black', fontFamily: 'IrishGrover-Regular'},
+  user_time: {fontSize: 18, color: 'black', fontFamily: 'IrishGrover-Regular'},
   select_all: {fontSize: 20, color: 'white', fontFamily: 'IrishGrover-Regular'},
+  directionText: {fontSize: 12, color: 'gray', marginLeft: 4},
+
+  // Tilted towards 3rd quadrant (Down-Left)
+  tiltedArrow: {
+    transform: [{rotate: '45deg'}],
+  },
+
   spacing: {marginTop: '19%'},
   emptyContainer: {
     flex: 1,

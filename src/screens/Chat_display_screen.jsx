@@ -45,6 +45,7 @@ const Chat_display_screen = ({navigation, route}) => {
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const {activeCall} = useContext(AuthContext); //? Assuming activeCall a global variable dfor diabling call button
   const db = getFirestore();
   const scrollViewRef = useRef();
   const sendAnim = useRef(new Animated.Value(0)).current;
@@ -116,11 +117,10 @@ const Chat_display_screen = ({navigation, route}) => {
   }, [chatId]);
 
   // FIX: REWRITTEN CALL LOGIC
-  const handleAudioCall = async () => {
+ const handleAudioCall = async () => {
     if (!friendId || !user) return;
     try {
-      // We name the document 'friendId' because the friend's App.jsx
-      // is listening for a document named after their own UID.
+      // 1. Initiate the Active Call (Signals the friend's app to ring)
       await setDoc(doc(db, 'calls', friendId), {
         callerId: user.uid,
         callerName: user.displayName || 'Chattrix User',
@@ -133,8 +133,27 @@ const Chat_display_screen = ({navigation, route}) => {
         createdAt: serverTimestamp(),
       });
 
+      // 2. SAVE HISTORY FOR BOTH USERS
+      const historyTimestamp = serverTimestamp();
+
+      // Save for ME (Caller - Outbound)
+      await addDoc(collection(db, 'call_history'), {
+        userId: user.uid,        // My ID
+        friendId: friendId,      // Friend's ID
+        type: 'outbound',        // I am calling out
+        timestamp: historyTimestamp,
+      });
+
+      // Save for FRIEND (Receiver - Inbound)
+      await addDoc(collection(db, 'call_history'), {
+        userId: friendId,        // Friend's ID
+        friendId: user.uid,      // My ID
+        type: 'inbound',         // They are receiving in
+        timestamp: historyTimestamp,
+      });
+
       // NOTE: DO NOT use navigation.navigate here.
-      // Your App.jsx listener will detect this new document and show the Modal.
+      // Your App.jsx listener will detect the 'calls' document and show the Modal.
     } catch (error) {
       console.error(error);
       Alert.alert('Error', 'Could not start call');
@@ -350,10 +369,22 @@ const Chat_display_screen = ({navigation, route}) => {
           ) : (
             <>
               <TouchableOpacity
-                style={styles.call_icon}
-                onPress={handleAudioCall}>
-                <Icon name="call-outline" size={37} color="#510DC0" />
+                style={[
+                  styles.call_icon,
+                  // If activeCall exists, we apply a faded effect and maybe a different background
+                  activeCall && {opacity: 0.6},
+                ]}
+                onPress={handleAudioCall}
+                disabled={!!activeCall} // DISABLING the button if any call is active
+              >
+                <Icon
+                  name="call-outline"
+                  size={37}
+                  // If activeCall is true, color becomes Gray/Black, otherwise it's your Purple
+                  color={activeCall ? '#878787' : '#510DC0'}
+                />
               </TouchableOpacity>
+
               <TouchableOpacity onPress={() => setShowProfileModal(true)}>
                 <Image source={displayImage} style={styles.image} />
               </TouchableOpacity>

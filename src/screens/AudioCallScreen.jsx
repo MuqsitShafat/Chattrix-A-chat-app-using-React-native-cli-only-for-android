@@ -14,7 +14,7 @@ import {getFirestore, doc, deleteDoc} from '@react-native-firebase/firestore';
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
   const callData = route?.params;
-
+  const initialProfilePic = callData.callerId === myId ? callData.receiverPic : callData.callerPic;
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(false);
@@ -29,7 +29,6 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
 
   const isCaller = callData.callerId === myId;
   const aliasName = isCaller ? callData.receiverName : callData.callerName;
-  const profilePic = isCaller ? callData.receiverPic : callData.callerPic;
 
   const handleHangup = async () => {
     try {
@@ -41,10 +40,18 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     }
   };
 
-  const displayImage = profilePic
-    ? {uri: profilePic}
-    : require('../images/User_profile_icon.jpg');
-
+  let photoUrl = initialProfilePic;
+  if (photoUrl && typeof photoUrl === 'string') {
+    if (photoUrl.includes('googleusercontent.com')) {
+      photoUrl = photoUrl.replace('s96-c', 's400-c');
+    } else if (photoUrl.includes('facebook.com')) {
+      photoUrl = `${photoUrl}?type=large`;
+    }
+  }
+  const displayImage =
+    photoUrl && photoUrl !== ''
+      ? {uri: photoUrl}
+      : require('../images/User_profile_icon.jpg');
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topSection}>
