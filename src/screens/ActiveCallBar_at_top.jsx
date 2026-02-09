@@ -5,9 +5,8 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
   doc,
-  deleteDoc,
+  runTransaction,
   collection,
-  addDoc,
   serverTimestamp,
 } from '@react-native-firebase/firestore';
 
@@ -15,35 +14,52 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
   const db = getFirestore();
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
-  const [isEnding, setIsEnding] = useState(false); // NEW: Prevent double clicks
+  const [localEnding, setLocalEnding] = useState(false);
 
   const handleHangup = async () => {
-    if (isEnding) return; // Exit if already processing
-    setIsEnding(true); // Disable immediately
+    if (localEnding) return;
+    setLocalEnding(true);
+
+    const docId = callData.id || myId;
+    const callDocRef = doc(db, 'calls', docId);
 
     try {
-      const docId = callData.id || myId;
-      const historyTimestamp = serverTimestamp();
+      await runTransaction(db, async transaction => {
+        const callSnapshot = await transaction.get(callDocRef);
 
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.callerId,
-        friendId: callData.receiverId,
-        type: 'outbound',
-        timestamp: historyTimestamp,
-      });
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.receiverId,
-        friendId: callData.callerId,
-        type: 'inbound',
-        timestamp: historyTimestamp,
-      });
+        // Atomic Check: If doc is missing or status is already 'ending', STOP.
+        if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
+          return;
+        }
 
-      await deleteDoc(doc(db, 'calls', docId));
+        // Mark as ending globally
+        transaction.update(callDocRef, {status: 'ending'});
+
+        const historyTimestamp = serverTimestamp();
+        const historyRef1 = doc(collection(db, 'call_history'));
+        const historyRef2 = doc(collection(db, 'call_history'));
+
+        transaction.set(historyRef1, {
+          userId: callData.callerId,
+          friendId: callData.receiverId,
+          type: 'outbound',
+          timestamp: historyTimestamp,
+        });
+        transaction.set(historyRef2, {
+          userId: callData.receiverId,
+          friendId: callData.callerId,
+          type: 'inbound',
+          timestamp: historyTimestamp,
+        });
+
+        transaction.delete(callDocRef);
+      });
     } catch (e) {
       console.error('Error hanging up:', e);
-      setIsEnding(false); // Re-enable if there was a genuine error
+      setLocalEnding(false);
     }
   };
+
   const aliasName =
     callData.callerId === myId ? callData.receiverName : callData.callerName;
 
@@ -51,9 +67,11 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={onPressBar}
-      style={styles.floatingBar}>
+      disabled={localEnding}
+      style={[styles.floatingBar, localEnding && {opacity: 0.8}]}>
       <TouchableOpacity
         onPress={() => setIsMuted(!isMuted)}
+        disabled={localEnding}
         style={styles.sideBtn}>
         <Ionicons
           name={isMuted ? 'mic-off' : 'mic-outline'}
@@ -64,6 +82,7 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
 
       <TouchableOpacity
         onPress={() => setIsCameraOn(!isCameraOn)}
+        disabled={localEnding}
         style={styles.sideBtn}>
         <Ionicons
           name={isCameraOn ? 'videocam' : 'videocam-outline'}
@@ -72,12 +91,14 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       </TouchableOpacity>
 
-      <Text style={styles.aliasText}>{aliasName}</Text>
+      <Text style={styles.aliasText}>
+        {localEnding ? 'Ending...' : aliasName}
+      </Text>
 
       <TouchableOpacity
         onPress={handleHangup}
-        disabled={isEnding} // Disable UI
-        style={[styles.sideBtn, styles.redBtn, isEnding && {opacity: 0.5}]}>
+        disabled={localEnding}
+        style={[styles.sideBtn, styles.redBtn, localEnding && {opacity: 0.5}]}>
         <MaterialIcons name="call-end" size={24} color="white" />
       </TouchableOpacity>
     </TouchableOpacity>

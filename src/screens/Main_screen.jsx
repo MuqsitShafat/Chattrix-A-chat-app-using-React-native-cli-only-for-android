@@ -5,6 +5,7 @@ import {
   doc,
   onSnapshot,
   query,
+  where,
   orderBy,
   updateDoc,
   getDocs,
@@ -33,9 +34,25 @@ const Main_screen = ({navigation}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [lastMessages, setLastMessages] = useState({});
+  const [messageTimestamps, setMessageTimestamps] = useState({});
 
   const db = getFirestore();
   const auth = getAuth();
+
+  const formatTimeAgo = timestamp => {
+    if (!timestamp) return '';
+    const now = Date.now();
+    const diff = now - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `${days}d`;
+    if (hours > 0) return `${hours}h`;
+    if (minutes > 0) return `${minutes}m`;
+    return 'now';
+  };
 
   useEffect(() => {
     const backAction = () => {
@@ -89,12 +106,18 @@ const Main_screen = ({navigation}) => {
           msg => !msg.deletedBy || !msg.deletedBy.includes(user.uid),
         );
         let displayLastMsg = 'No messages yet. Say Hi! 👋';
+        let timestamp = friend.addedAt ? friend.addedAt.toMillis() : 0;
+
         if (latestValidMsg) {
           displayLastMsg = latestValidMsg.isDeleted
             ? '🚫 This message was deleted'
             : latestValidMsg.text;
+          if (latestValidMsg.createdAt) {
+            timestamp = latestValidMsg.createdAt.toMillis();
+          }
         }
         setLastMessages(prev => ({...prev, [friend.friendId]: displayLastMsg}));
+        setMessageTimestamps(prev => ({...prev, [friend.friendId]: timestamp}));
       });
     });
     return () => {
@@ -145,15 +168,21 @@ const Main_screen = ({navigation}) => {
       ],
     );
   };
-
-  const filteredUsers = dynamicUsers.filter(user => {
-    const matchesSearch = user.aliasName
-      ?.toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    return isSearching && searchQuery.length > 0
-      ? matchesSearch
-      : !user.chatHidden;
-  });
+// Filtering logic: on the basis of recent messages
+  const filteredUsers = dynamicUsers
+    .filter(user => {
+      const matchesSearch = user.aliasName
+        ?.toLowerCase()
+        .includes(searchQuery.toLowerCase());
+      return isSearching && searchQuery.length > 0
+        ? matchesSearch
+        : !user.chatHidden;
+    })
+    .sort((a, b) => {
+      const timeA = messageTimestamps[a.friendId] || 0;
+      const timeB = messageTimestamps[b.friendId] || 0;
+      return timeB - timeA;
+    });
 
   return (
     <View style={styles.container}>
@@ -227,7 +256,17 @@ const Main_screen = ({navigation}) => {
               }}>
               <Image source={item.displayImage} style={styles.profileImage} />
               <View style={styles.chatContent}>
-                <Text style={styles.userName}>{item.aliasName}</Text>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}>
+                  <Text style={styles.userName}>{item.aliasName}</Text>
+                  <Text style={styles.timeAgoText}>
+                    {formatTimeAgo(messageTimestamps[item.friendId])}
+                  </Text>
+                </View>
                 <Text style={styles.userMessage} numberOfLines={1}>
                   {lastMessages[item.friendId] || 'Loading...'}
                 </Text>
@@ -294,6 +333,7 @@ const styles = StyleSheet.create({
   chatContent: {marginLeft: 15, flex: 1},
   userName: {fontSize: 24, fontFamily: 'IrishGrover-Regular', color: '#333'},
   userMessage: {fontSize: 16, color: '#564141', marginTop: 5},
+  timeAgoText: {fontSize: 12, color: '#202b9e72', fontFamily: 'Milonga-Regular'},
   floatingButton: {
     position: 'absolute',
     bottom: 100,

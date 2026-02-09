@@ -12,11 +12,12 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
   doc,
-  deleteDoc,
+  runTransaction,
   collection,
   addDoc,
   serverTimestamp,
 } from '@react-native-firebase/firestore';
+
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
   const callData = route?.params;
@@ -25,7 +26,7 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(false);
-  const [isEnding, setIsEnding] = useState(false); // NEW
+  const [localEnding, setLocalEnding] = useState(false);
 
   if (!callData) {
     return (
@@ -39,31 +40,49 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   const aliasName = isCaller ? callData.receiverName : callData.callerName;
 
   const handleHangup = async () => {
-    if (isEnding) return;
-    setIsEnding(true);
+    if (localEnding) return;
+    setLocalEnding(true);
+
+    const docId = callData.id || myId;
+    const callDocRef = doc(db, 'calls', docId);
 
     try {
-      const docId = callData.id || myId;
-      const historyTimestamp = serverTimestamp();
+      await runTransaction(db, async transaction => {
+        const callSnapshot = await transaction.get(callDocRef);
 
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.callerId,
-        friendId: callData.receiverId,
-        type: 'outbound',
-        timestamp: historyTimestamp,
+        // If doc is gone or already marked as ending, abort!
+        if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
+          return;
+        }
+
+        // 1. Mark as ending immediately in DB so other screens see it
+        transaction.update(callDocRef, {status: 'ending'});
+
+        // 2. Add to history
+        const historyTimestamp = serverTimestamp();
+        const historyRef1 = doc(collection(db, 'call_history'));
+        const historyRef2 = doc(collection(db, 'call_history'));
+
+        transaction.set(historyRef1, {
+          userId: callData.callerId,
+          friendId: callData.receiverId,
+          type: 'outbound',
+          timestamp: historyTimestamp,
+        });
+
+        transaction.set(historyRef2, {
+          userId: callData.receiverId,
+          friendId: callData.callerId,
+          type: 'inbound',
+          timestamp: historyTimestamp,
+        });
+
+        // 3. Delete the call
+        transaction.delete(callDocRef);
       });
-
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.receiverId,
-        friendId: callData.callerId,
-        type: 'inbound',
-        timestamp: historyTimestamp,
-      });
-
-      await deleteDoc(doc(db, 'calls', docId));
     } catch (e) {
-      console.error('Error ending call:', e);
-      setIsEnding(false);
+      console.error('Transaction failed: ', e);
+      setLocalEnding(false);
     }
   };
 
@@ -79,11 +98,14 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     photoUrl && photoUrl !== ''
       ? {uri: photoUrl}
       : require('../images/User_profile_icon.jpg');
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topSection}>
         <Text style={styles.nameText}>{aliasName || 'Chattrix User'}</Text>
-        <Text style={styles.statusText}>In Progress...</Text>
+        <Text style={styles.statusText}>
+          {localEnding ? 'Ending...' : 'In Progress...'}
+        </Text>
       </View>
 
       <View style={styles.imageContainer}>
@@ -91,9 +113,9 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       </View>
 
       <View style={styles.controls}>
-        {/* Speaker */}
         <TouchableOpacity
           style={styles.iconBtnContainer}
+          disabled={localEnding}
           onPress={() => setIsSpeakerOn(!isSpeakerOn)}>
           <View style={[styles.iconBtn, isSpeakerOn && styles.activeBtn]}>
             <Ionicons
@@ -105,9 +127,9 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           <Text style={styles.btnLabel}>Speaker</Text>
         </TouchableOpacity>
 
-        {/* Video Toggle (New) */}
         <TouchableOpacity
           style={styles.iconBtnContainer}
+          disabled={localEnding}
           onPress={() => setIsVideoOn(!isVideoOn)}>
           <View style={[styles.iconBtn, isVideoOn && styles.activeBtn]}>
             <Ionicons
@@ -119,9 +141,9 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           <Text style={styles.btnLabel}>Video</Text>
         </TouchableOpacity>
 
-        {/* Mute */}
         <TouchableOpacity
           style={styles.iconBtnContainer}
+          disabled={localEnding}
           onPress={() => setIsMuted(!isMuted)}>
           <View style={[styles.iconBtn, isMuted && styles.activeBtn]}>
             <Ionicons
@@ -133,23 +155,26 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           <Text style={styles.btnLabel}>Mute</Text>
         </TouchableOpacity>
 
-        {/* Minimize */}
-        <TouchableOpacity style={styles.iconBtnContainer} onPress={onMinimize}>
+        <TouchableOpacity
+          style={styles.iconBtnContainer}
+          onPress={onMinimize}
+          disabled={localEnding}>
           <View style={styles.iconBtn}>
             <MaterialIcons name="fullscreen-exit" size={28} color="white" />
           </View>
           <Text style={styles.btnLabel}>Minimize</Text>
         </TouchableOpacity>
 
-        {/* Hangup Button Section */}
         <TouchableOpacity
           style={styles.hangupBtnContainer}
           onPress={handleHangup}
-          disabled={isEnding}>
-          <View style={[styles.hangupBtn, isEnding && {opacity: 0.5}]}>
+          disabled={localEnding}>
+          <View style={[styles.hangupBtn, localEnding && {opacity: 0.5}]}>
             <MaterialIcons name="call-end" size={35} color="white" />
           </View>
-          <Text style={styles.btnLabel}>{isEnding ? 'Ending...' : 'End'}</Text>
+          <Text style={styles.btnLabel}>
+            {localEnding ? 'Ending...' : 'End'}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
