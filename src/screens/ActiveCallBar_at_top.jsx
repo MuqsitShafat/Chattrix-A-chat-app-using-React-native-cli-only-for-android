@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useContext, useEffect} from 'react'; // Added useContext, useEffect
 import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -9,12 +9,30 @@ import {
   collection,
   serverTimestamp,
 } from '@react-native-firebase/firestore';
+import {RTCView} from 'react-native-webrtc'; // Added for persistent audio
+import {AuthContext} from '../Auth/AuthContext'; // Import context
 
 const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
   const db = getFirestore();
+  const {localStream, setLocalStream, remoteStream, setRemoteStream, pc} =
+    useContext(AuthContext); // Access global stream
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [localEnding, setLocalEnding] = useState(false);
+
+  // [ADDED] Hardware control for Mute
+  useEffect(() => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(t => (t.enabled = !isMuted));
+    }
+  }, [isMuted, localStream]);
+
+  // [ADDED] Hardware control for Camera
+  useEffect(() => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(t => (t.enabled = isCameraOn));
+    }
+  }, [isCameraOn, localStream]);
 
   const handleHangup = async () => {
     if (localEnding) return;
@@ -24,15 +42,24 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
     const callDocRef = doc(db, 'calls', docId);
 
     try {
+      // [WEBRTC CLEANUP]
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        setLocalStream(null);
+      }
+
+      if (pc.current) {
+        pc.current.close();
+      }
+      setRemoteStream(null);
+
       await runTransaction(db, async transaction => {
         const callSnapshot = await transaction.get(callDocRef);
 
-        // Atomic Check: If doc is missing or status is already 'ending', STOP.
         if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
           return;
         }
 
-        // Mark as ending globally
         transaction.update(callDocRef, {status: 'ending'});
 
         const historyTimestamp = serverTimestamp();
@@ -69,6 +96,14 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       onPress={onPressBar}
       disabled={localEnding}
       style={[styles.floatingBar, localEnding && {opacity: 0.8}]}>
+      {/* Persist the remote audio track via RTCView while minimized */}
+      {remoteStream && (
+        <RTCView
+          streamURL={remoteStream.toURL()}
+          style={{width: 1, height: 1, position: 'absolute', opacity: 0}}
+        />
+      )}
+
       <TouchableOpacity
         onPress={() => setIsMuted(!isMuted)}
         disabled={localEnding}

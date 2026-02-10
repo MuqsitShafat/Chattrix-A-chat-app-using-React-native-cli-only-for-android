@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useEffect, useContext, useRef} from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,28 @@ import {
   doc,
   runTransaction,
   collection,
-  addDoc,
   serverTimestamp,
+  onSnapshot,
+  setDoc,
+  addDoc,
+  getDoc,
+  updateDoc,
 } from '@react-native-firebase/firestore';
+import {requestCallPermissions} from '../components/permissions';
+import {
+  mediaDevices,
+  RTCPeerConnection,
+  RTCSessionDescription,
+  RTCIceCandidate,
+  RTCView,
+} from 'react-native-webrtc';
+import {AuthContext} from '../Auth/AuthContext';
+import InCallManager from 'react-native-incall-manager';
 
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
+  const {localStream, setLocalStream, remoteStream, setRemoteStream, pc} =
+    useContext(AuthContext); // Use global stream and pc
   const callData = route?.params;
   const initialProfilePic =
     callData.callerId === myId ? callData.receiverPic : callData.callerPic;
@@ -27,6 +43,133 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [isVideoOn, setIsVideoOn] = useState(false);
   const [localEnding, setLocalEnding] = useState(false);
+
+  // Handle Audio Routing (Speaker vs Earpiece)
+  useEffect(() => {
+    if (isSpeakerOn) {
+      InCallManager.setForceSpeakerphoneOn(true);
+    } else {
+      InCallManager.setForceSpeakerphoneOn(false);
+    }
+  }, [isSpeakerOn]);
+
+  useEffect(() => {
+    const setupCall = async () => {
+      // Don't re-initiate if stream already exists (prevents reset on re-opening screen)
+      if (localStream) return;
+
+      const allowed = await requestCallPermissions();
+      if (!allowed) return;
+
+      // Start InCallManager lifecycle
+      InCallManager.start({media: isVideoOn ? 'video' : 'audio'});
+      InCallManager.setKeepScreenOn(true);
+
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+        setLocalStream(stream);
+        stream.getTracks().forEach(track => pc.current.addTrack(track, stream));
+
+        pc.current.ontrack = event => {
+          setRemoteStream(event.streams[0]);
+        };
+
+        const docId = callData.id || myId;
+        const callDocRef = doc(db, 'calls', docId);
+
+        pc.current.onicecandidate = event => {
+          if (event.candidate) {
+            const candidatesCol = collection(
+              callDocRef,
+              myId === callData.callerId
+                ? 'callerCandidates'
+                : 'receiverCandidates',
+            );
+            addDoc(candidatesCol, event.candidate.toJSON());
+          }
+        };
+
+        if (myId === callData.callerId) {
+          const offerDescription = await pc.current.createOffer();
+          await pc.current.setLocalDescription(offerDescription);
+          await updateDoc(callDocRef, {
+            offer: {sdp: offerDescription.sdp, type: offerDescription.type},
+          });
+
+          onSnapshot(callDocRef, snapshot => {
+            const data = snapshot.data();
+            if (!pc.current.currentRemoteDescription && data?.answer) {
+              pc.current.setRemoteDescription(
+                new RTCSessionDescription(data.answer),
+              );
+            }
+          });
+
+          onSnapshot(collection(callDocRef, 'receiverCandidates'), snapshot => {
+            snapshot.docChanges().forEach(change => {
+              if (change.type === 'added') {
+                pc.current.addIceCandidate(
+                  new RTCIceCandidate(change.doc.data()),
+                );
+              }
+            });
+          });
+        } else {
+          onSnapshot(callDocRef, async snapshot => {
+            const data = snapshot.data();
+            if (!pc.current.currentRemoteDescription && data?.offer) {
+              await pc.current.setRemoteDescription(
+                new RTCSessionDescription(data.offer),
+              );
+              const answerDescription = await pc.current.createAnswer();
+              await pc.current.setLocalDescription(answerDescription);
+              await updateDoc(callDocRef, {
+                answer: {
+                  sdp: answerDescription.sdp,
+                  type: answerDescription.type,
+                },
+              });
+            }
+          });
+
+          onSnapshot(collection(callDocRef, 'callerCandidates'), snapshot => {
+            snapshot.docChanges().forEach(change => {
+              if (change.type === 'added') {
+                pc.current.addIceCandidate(
+                  new RTCIceCandidate(change.doc.data()),
+                );
+              }
+            });
+          });
+        }
+      } catch (e) {
+        console.error('Call Setup Error:', e);
+      }
+    };
+
+    setupCall();
+
+    return () => {
+      // NOTE: We DO NOT close pc.current here so the call persists when minimized
+      InCallManager.stop();
+    };
+  }, []);
+
+  // [ADDED FOR WEBRTC] - Handle Mute/Video toggle in stream
+  useEffect(() => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(t => (t.enabled = !isMuted));
+    }
+  }, [isMuted, localStream]);
+
+  useEffect(() => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(t => (t.enabled = isVideoOn));
+    }
+  }, [isVideoOn, localStream]);
 
   if (!callData) {
     return (
@@ -47,18 +190,25 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     const callDocRef = doc(db, 'calls', docId);
 
     try {
+      // [WEBRTC CLEANUP]
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        setLocalStream(null);
+      }
+
+      pc.current.close();
+      setRemoteStream(null);
+      InCallManager.stop();
+
       await runTransaction(db, async transaction => {
         const callSnapshot = await transaction.get(callDocRef);
 
-        // If doc is gone or already marked as ending, abort!
         if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
           return;
         }
 
-        // 1. Mark as ending immediately in DB so other screens see it
         transaction.update(callDocRef, {status: 'ending'});
 
-        // 2. Add to history
         const historyTimestamp = serverTimestamp();
         const historyRef1 = doc(collection(db, 'call_history'));
         const historyRef2 = doc(collection(db, 'call_history'));
@@ -77,7 +227,6 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           timestamp: historyTimestamp,
         });
 
-        // 3. Delete the call
         transaction.delete(callDocRef);
       });
     } catch (e) {
@@ -111,7 +260,14 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       <View style={styles.imageContainer}>
         <Image source={displayImage} style={styles.profileImage} />
       </View>
-
+      {/* This hidden view handles the remote audio/video connection */}
+      {remoteStream && (
+        <RTCView
+          streamURL={remoteStream.toURL()}
+          style={{width: 1, height: 1, opacity: 0}} // Keep it small/hidden for audio-only calls
+          objectFit="cover"
+        />
+      )}
       <View style={styles.controls}>
         <TouchableOpacity
           style={styles.iconBtnContainer}
