@@ -11,331 +11,435 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
-  doc,
-  runTransaction,
   collection,
   serverTimestamp,
-  onSnapshot,
-  setDoc,
   addDoc,
-  getDoc,
-  updateDoc,
 } from '@react-native-firebase/firestore';
 import {requestCallPermissions} from '../components/permissions';
 import {
   mediaDevices,
-  RTCPeerConnection,
   RTCSessionDescription,
   RTCIceCandidate,
   RTCView,
+  RTCPeerConnection,
 } from 'react-native-webrtc';
 import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
+import {getSocket} from '../services/socketService';
 
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
-  const {localStream, setLocalStream, remoteStream, setRemoteStream, pc} =
-    useContext(AuthContext); // Use global stream and pc
+  const {
+    localStream,
+    setLocalStream,
+    remoteStream,
+    setRemoteStream,
+    pc,
+    isMuted,
+    toggleMute,
+    isVideoOn,
+    toggleVideo,
+    callDuration,
+    setCallDuration,
+    setCallStatus,
+    setActiveCall,
+    isFrontCamera,
+    setIsFrontCamera,
+    isRemoteFrontCamera,
+    setIsRemoteFrontCamera,
+  } = useContext(AuthContext);
+
   const callData = route?.params;
-  const initialProfilePic =
-    callData.callerId === myId ? callData.receiverPic : callData.callerPic;
-  const [isMuted, setIsMuted] = useState(false);
+
+  const isCaller = callData?.callerId === myId;
+  const otherUserId = isCaller ? callData?.receiverId : callData?.callerId;
+  const aliasName = isCaller ? callData?.receiverName : callData?.callerName;
+  const initialProfilePic = isCaller
+    ? callData?.receiverPic
+    : callData?.callerPic;
+
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
-  const [isVideoOn, setIsVideoOn] = useState(false);
   const [localEnding, setLocalEnding] = useState(false);
+  const [callConnected, setCallConnected] = useState(false);
 
-  // Handle Audio Routing (Speaker vs Earpiece)
-  useEffect(() => {
-    if (isSpeakerOn) {
-      InCallManager.setForceSpeakerphoneOn(true);
-    } else {
-      InCallManager.setForceSpeakerphoneOn(false);
+  const iceCandidatesQueue = useRef([]);
+
+  const handleToggleMute = () => toggleMute(!isMuted);
+
+  // Video toggle — notifies other person via socket
+  const handleToggleVideo = () => {
+    const newVideoState = !isVideoOn;
+    toggleVideo(newVideoState);
+    getSocket()?.emit('videoToggle', {
+      to: otherUserId,
+      isVideoOn: newVideoState,
+    });
+  };
+
+  const processIceQueue = () => {
+    while (iceCandidatesQueue.current.length > 0) {
+      const candidate = iceCandidatesQueue.current.shift();
+      pc.current
+        ?.addIceCandidate(new RTCIceCandidate(candidate))
+        .catch(e => console.log('Queued ICE error:', e));
     }
-  }, [isSpeakerOn]);
+  };
+
+  const setupPeerConnection = stream => {
+    if (pc.current) pc.current.close();
+
+    pc.current = new RTCPeerConnection({
+      iceServers: [
+        {urls: 'stun:stun.l.google.com:19302'},
+        {urls: 'stun:stun1.l.google.com:19302'},
+      ],
+    });
+
+    stream.getTracks().forEach(track => {
+      pc.current.addTrack(track, stream);
+    });
+
+    pc.current.ontrack = event => {
+      if (event.streams?.[0]) {
+        setRemoteStream(event.streams[0]);
+      }
+    };
+
+    pc.current.onicecandidate = event => {
+      if (event.candidate) {
+        getSocket()?.emit('ICEcandidate', {
+          calleeId: otherUserId,
+          rtcMessage: {
+            label: event.candidate.sdpMLineIndex,
+            id: event.candidate.sdpMid,
+            candidate: event.candidate.candidate,
+          },
+        });
+      }
+    };
+
+    pc.current.onconnectionstatechange = () => {
+      console.log('PC State:', pc.current?.connectionState);
+    };
+  };
 
   useEffect(() => {
-    const setupCall = async () => {
-      // Don't re-initiate if stream already exists (prevents reset on re-opening screen)
-      if (localStream) return;
+    const socket = getSocket();
+    if (!socket || !callData) return;
 
+    const startCall = async () => {
       const allowed = await requestCallPermissions();
       if (!allowed) return;
 
-      // Start InCallManager lifecycle
-      InCallManager.start({media: isVideoOn ? 'video' : 'audio'});
+      // Start as audio only
+      InCallManager.start({media: 'audio'});
       InCallManager.setKeepScreenOn(true);
 
       try {
         const stream = await mediaDevices.getUserMedia({
           audio: true,
-          video: true,
+          video: {facingMode: 'user', width: 640, height: 480},
         });
+
+        // Audio on, video track disabled until user turns it on
+        stream.getAudioTracks().forEach(t => (t.enabled = true));
+        stream.getVideoTracks().forEach(t => (t.enabled = false));
+
         setLocalStream(stream);
-        stream.getTracks().forEach(track => pc.current.addTrack(track, stream));
+        setupPeerConnection(stream);
 
-        pc.current.ontrack = event => {
-          setRemoteStream(event.streams[0]);
-        };
-
-        const docId = callData.id || myId;
-        const callDocRef = doc(db, 'calls', docId);
-
-        pc.current.onicecandidate = event => {
-          if (event.candidate) {
-            const candidatesCol = collection(
-              callDocRef,
-              myId === callData.callerId
-                ? 'callerCandidates'
-                : 'receiverCandidates',
-            );
-            addDoc(candidatesCol, event.candidate.toJSON());
-          }
-        };
-
-        if (myId === callData.callerId) {
-          const offerDescription = await pc.current.createOffer();
-          await pc.current.setLocalDescription(offerDescription);
-          await updateDoc(callDocRef, {
-            offer: {sdp: offerDescription.sdp, type: offerDescription.type},
-          });
-
-          onSnapshot(callDocRef, snapshot => {
-            const data = snapshot.data();
-            if (!pc.current.currentRemoteDescription && data?.answer) {
-              pc.current.setRemoteDescription(
-                new RTCSessionDescription(data.answer),
-              );
-            }
-          });
-
-          onSnapshot(collection(callDocRef, 'receiverCandidates'), snapshot => {
-            snapshot.docChanges().forEach(change => {
-              if (change.type === 'added') {
-                pc.current.addIceCandidate(
-                  new RTCIceCandidate(change.doc.data()),
-                );
-              }
-            });
+        if (isCaller) {
+          const offer = await pc.current.createOffer();
+          await pc.current.setLocalDescription(offer);
+          socket.emit('call', {
+            calleeId: otherUserId,
+            callerId: myId,
+            callerName: callData.callerName,
+            callerPic: callData.callerPic,
+            receiverId: otherUserId,
+            receiverName: callData.receiverName,
+            receiverPic: callData.receiverPic,
+            rtcMessage: offer,
           });
         } else {
-          onSnapshot(callDocRef, async snapshot => {
-            const data = snapshot.data();
-            if (!pc.current.currentRemoteDescription && data?.offer) {
-              await pc.current.setRemoteDescription(
-                new RTCSessionDescription(data.offer),
-              );
-              const answerDescription = await pc.current.createAnswer();
-              await pc.current.setLocalDescription(answerDescription);
-              await updateDoc(callDocRef, {
-                answer: {
-                  sdp: answerDescription.sdp,
-                  type: answerDescription.type,
-                },
-              });
-            }
-          });
-
-          onSnapshot(collection(callDocRef, 'callerCandidates'), snapshot => {
-            snapshot.docChanges().forEach(change => {
-              if (change.type === 'added') {
-                pc.current.addIceCandidate(
-                  new RTCIceCandidate(change.doc.data()),
-                );
-              }
+          if (callData.rtcMessage) {
+            await pc.current.setRemoteDescription(
+              new RTCSessionDescription(callData.rtcMessage),
+            );
+            processIceQueue();
+            const answer = await pc.current.createAnswer();
+            await pc.current.setLocalDescription(answer);
+            socket.emit('answerCall', {
+              callerId: otherUserId,
+              rtcMessage: answer,
             });
-          });
+          }
         }
       } catch (e) {
-        console.error('Call Setup Error:', e);
+        console.error('Call setup error:', e);
       }
     };
 
-    setupCall();
+    socket.on('callAnswered', async data => {
+      if (pc.current && !pc.current.remoteDescription) {
+        await pc.current.setRemoteDescription(
+          new RTCSessionDescription(data.rtcMessage),
+        );
+        processIceQueue();
+        setCallConnected(true);
+      }
+    });
+
+    socket.on('ICEcandidate', data => {
+      const msg = data.rtcMessage;
+      if (msg?.candidate) {
+        const candidate = {
+          candidate: msg.candidate,
+          sdpMLineIndex: msg.label,
+          sdpMid: msg.id,
+        };
+        if (pc.current?.remoteDescription) {
+          pc.current
+            .addIceCandidate(new RTCIceCandidate(candidate))
+            .catch(e => console.log('ICE error:', e));
+        } else {
+          iceCandidatesQueue.current.push(candidate);
+        }
+      }
+    });
+
+    socket.on('cameraSwitch', data => {
+      setIsRemoteFrontCamera(data.isFrontCamera);
+    });
+
+    // When other person toggles their video
+    socket.on('remoteVideoToggle', data => {
+      console.log('Remote video toggled:', data.isVideoOn);
+      // remoteStream display is already handled by RTCView
+      // This can be used to show/hide a UI indicator if needed
+    });
+
+    socket.on('remoteHangup', () => {
+      leaveCall(false);
+    });
+
+    startCall();
 
     return () => {
-      // NOTE: We DO NOT close pc.current here so the call persists when minimized
-      InCallManager.stop();
+      socket.off('callAnswered');
+      socket.off('ICEcandidate');
+      socket.off('cameraSwitch');
+      socket.off('remoteVideoToggle');
+      socket.off('remoteHangup');
     };
   }, []);
 
-  // [ADDED FOR WEBRTC] - Handle Mute/Video toggle in stream
+  // Sync mute/video to hardware tracks
   useEffect(() => {
     if (localStream) {
       localStream.getAudioTracks().forEach(t => (t.enabled = !isMuted));
-    }
-  }, [isMuted, localStream]);
-
-  useEffect(() => {
-    if (localStream) {
       localStream.getVideoTracks().forEach(t => (t.enabled = isVideoOn));
     }
-  }, [isVideoOn, localStream]);
+    // Switch InCallManager mode when video turns on/off
+    InCallManager.start({media: isVideoOn ? 'video' : 'audio'});
+  }, [isMuted, isVideoOn, localStream]);
 
-  if (!callData) {
-    return (
-      <View style={[styles.container, {justifyContent: 'center'}]}>
-        <Text style={{color: 'white'}}>Connecting...</Text>
-      </View>
-    );
-  }
+  useEffect(() => {
+    InCallManager.setSpeakerphoneOn(isSpeakerOn);
+  }, [isSpeakerOn]);
 
-  const isCaller = callData.callerId === myId;
-  const aliasName = isCaller ? callData.receiverName : callData.callerName;
+  useEffect(() => {
+    let interval;
+    if (remoteStream) {
+      setCallConnected(true);
+      interval = setInterval(() => setCallDuration(p => p + 1), 1000);
+    } else {
+      setCallDuration(0);
+    }
+    return () => clearInterval(interval);
+  }, [remoteStream]);
 
-  const handleHangup = async () => {
+  const formatTime = seconds => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs
+      .toString()
+      .padStart(2, '0')}`;
+  };
+
+  const handleSwitchCamera = () => {
+    if (!localStream) return;
+    localStream.getVideoTracks().forEach(t => t._switchCamera());
+    const newIsFront = !isFrontCamera;
+    setIsFrontCamera(newIsFront);
+    getSocket()?.emit('cameraSwitch', {
+      to: otherUserId,
+      isFrontCamera: newIsFront,
+    });
+  };
+
+  const leaveCall = async (shouldEmit = true) => {
     if (localEnding) return;
     setLocalEnding(true);
 
-    const docId = callData.id || myId;
-    const callDocRef = doc(db, 'calls', docId);
+    if (shouldEmit) {
+      getSocket()?.emit('endCall', {to: otherUserId});
+    }
 
-    try {
-      // [WEBRTC CLEANUP]
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        setLocalStream(null);
-      }
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+      setLocalStream(null);
+    }
 
+    if (pc.current) {
       pc.current.close();
-      setRemoteStream(null);
-      InCallManager.stop();
+      pc.current = null;
+    }
 
-      await runTransaction(db, async transaction => {
-        const callSnapshot = await transaction.get(callDocRef);
+    setRemoteStream(null);
+    setCallStatus('idle');
+    setCallDuration(0);
+    setIsFrontCamera(true);
+    setIsRemoteFrontCamera(false);
+    iceCandidatesQueue.current = [];
+    InCallManager.stop();
 
-        if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
-          return;
-        }
-
-        transaction.update(callDocRef, {status: 'ending'});
-
-        const historyTimestamp = serverTimestamp();
-        const historyRef1 = doc(collection(db, 'call_history'));
-        const historyRef2 = doc(collection(db, 'call_history'));
-
-        transaction.set(historyRef1, {
-          userId: callData.callerId,
-          friendId: callData.receiverId,
-          type: 'outbound',
-          timestamp: historyTimestamp,
-        });
-
-        transaction.set(historyRef2, {
-          userId: callData.receiverId,
-          friendId: callData.callerId,
-          type: 'inbound',
-          timestamp: historyTimestamp,
-        });
-
-        transaction.delete(callDocRef);
+    // Write call history to Firebase
+    try {
+      const ts = serverTimestamp();
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.callerId,
+        friendId: callData.receiverId,
+        type: 'outbound',
+        timestamp: ts,
+      });
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.receiverId,
+        friendId: callData.callerId,
+        type: 'inbound',
+        timestamp: ts,
       });
     } catch (e) {
-      console.error('Transaction failed: ', e);
-      setLocalEnding(false);
+      console.log('History write error:', e);
     }
+
+    setActiveCall(null);
   };
 
-  let photoUrl = initialProfilePic;
-  if (photoUrl && typeof photoUrl === 'string') {
-    if (photoUrl.includes('googleusercontent.com')) {
-      photoUrl = photoUrl.replace('s96-c', 's400-c');
-    } else if (photoUrl.includes('facebook.com')) {
-      photoUrl = `${photoUrl}?type=large`;
-    }
-  }
-  const displayImage =
-    photoUrl && photoUrl !== ''
-      ? {uri: photoUrl}
-      : require('../images/User_profile_icon.jpg');
+  const getStatusText = () => {
+    if (localEnding) return 'Ending...';
+    if (remoteStream) return formatTime(callDuration);
+    if (isCaller) return callConnected ? 'Ringing...' : 'Calling...';
+    return 'Connecting...';
+  };
+
+  const displayImage = initialProfilePic
+    ? {uri: initialProfilePic}
+    : require('../images/User_profile_icon.jpg');
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topSection}>
-        <Text style={styles.nameText}>{aliasName || 'Chattrix User'}</Text>
-        <Text style={styles.statusText}>
-          {localEnding ? 'Ending...' : 'In Progress...'}
-        </Text>
+        <Text style={styles.nameText}>{aliasName}</Text>
+        <Text style={styles.statusText}>{getStatusText()}</Text>
       </View>
 
-      <View style={styles.imageContainer}>
-        <Image source={displayImage} style={styles.profileImage} />
+      <View style={styles.centerArea}>
+        {remoteStream && isVideoOn ? (
+          <RTCView
+            streamURL={remoteStream.toURL()}
+            style={styles.remoteVideo}
+            objectFit="cover"
+            mirror={isRemoteFrontCamera}
+          />
+        ) : (
+          <View style={styles.imageContainer}>
+            <Image source={displayImage} style={styles.profileImage} />
+          </View>
+        )}
+
+        {localStream && isVideoOn && (
+          <View style={styles.localVideoContainer}>
+            <RTCView
+              streamURL={localStream.toURL()}
+              style={styles.localVideo}
+              objectFit="cover"
+              zOrder={1}
+              mirror={isFrontCamera}
+            />
+          </View>
+        )}
       </View>
-      {/* This hidden view handles the remote audio/video connection */}
-      {remoteStream && (
+
+      {remoteStream && !isVideoOn && (
         <RTCView
           streamURL={remoteStream.toURL()}
-          style={{width: 1, height: 1, opacity: 0}} // Keep it small/hidden for audio-only calls
-          objectFit="cover"
+          style={{width: 1, height: 1, position: 'absolute', opacity: 0}}
         />
       )}
+
       <View style={styles.controls}>
-        <TouchableOpacity
-          style={styles.iconBtnContainer}
-          disabled={localEnding}
-          onPress={() => setIsSpeakerOn(!isSpeakerOn)}>
-          <View style={[styles.iconBtn, isSpeakerOn && styles.activeBtn]}>
-            <Ionicons
-              name={isSpeakerOn ? 'volume-high' : 'volume-high-outline'}
-              size={28}
-              color={isSpeakerOn ? 'black' : 'white'}
-            />
-          </View>
-          <Text style={styles.btnLabel}>Speaker</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.iconBtnContainer}
-          disabled={localEnding}
-          onPress={() => setIsVideoOn(!isVideoOn)}>
-          <View style={[styles.iconBtn, isVideoOn && styles.activeBtn]}>
-            <Ionicons
-              name={isVideoOn ? 'videocam' : 'videocam-outline'}
-              size={28}
-              color={isVideoOn ? 'black' : 'white'}
-            />
-          </View>
-          <Text style={styles.btnLabel}>Video</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.iconBtnContainer}
-          disabled={localEnding}
-          onPress={() => setIsMuted(!isMuted)}>
-          <View style={[styles.iconBtn, isMuted && styles.activeBtn]}>
-            <Ionicons
-              name={isMuted ? 'mic-off' : 'mic-outline'}
-              size={28}
-              color={isMuted ? 'black' : 'white'}
-            />
-          </View>
-          <Text style={styles.btnLabel}>Mute</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.iconBtnContainer}
+        <ControlBtn
+          onPress={() => setIsSpeakerOn(!isSpeakerOn)}
+          active={isSpeakerOn}
+          icon={isSpeakerOn ? 'volume-high' : 'volume-high-outline'}
+          label="Speaker"
+        />
+        <ControlBtn
+          onPress={handleToggleVideo}
+          active={isVideoOn}
+          icon={isVideoOn ? 'videocam' : 'videocam-outline'}
+          label="Video"
+        />
+        <ControlBtn
+          onPress={handleToggleMute}
+          active={isMuted}
+          icon={isMuted ? 'mic-off' : 'mic-outline'}
+          label="Mute"
+        />
+        {isVideoOn && (
+          <ControlBtn
+            onPress={handleSwitchCamera}
+            icon="camera-reverse-outline"
+            label="Flip"
+          />
+        )}
+        <ControlBtn
           onPress={onMinimize}
-          disabled={localEnding}>
-          <View style={styles.iconBtn}>
-            <MaterialIcons name="fullscreen-exit" size={28} color="white" />
-          </View>
-          <Text style={styles.btnLabel}>Minimize</Text>
-        </TouchableOpacity>
-
+          icon="fullscreen-exit"
+          label="Minimize"
+          isMaterial
+        />
         <TouchableOpacity
-          style={styles.hangupBtnContainer}
-          onPress={handleHangup}
-          disabled={localEnding}>
-          <View style={[styles.hangupBtn, localEnding && {opacity: 0.5}]}>
-            <MaterialIcons name="call-end" size={35} color="white" />
+          style={styles.iconBtnContainer}
+          onPress={() => leaveCall(true)}
+          activeOpacity={0.7}>
+          <View style={styles.hangupBtn}>
+            <MaterialIcons name="call-end" size={30} color="white" />
           </View>
-          <Text style={styles.btnLabel}>
-            {localEnding ? 'Ending...' : 'End'}
-          </Text>
+          <Text style={styles.btnLabel}>{localEnding ? 'Ending' : 'End'}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 };
+
+const ControlBtn = ({onPress, active, icon, label, isMaterial}) => (
+  <TouchableOpacity style={styles.iconBtnContainer} onPress={onPress}>
+    <View style={[styles.iconBtn, active && styles.activeBtn]}>
+      {isMaterial ? (
+        <MaterialIcons
+          name={icon}
+          size={26}
+          color={active ? 'black' : 'white'}
+        />
+      ) : (
+        <Ionicons name={icon} size={26} color={active ? 'black' : 'white'} />
+      )}
+    </View>
+    <Text style={styles.btnLabel}>{label}</Text>
+  </TouchableOpacity>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -344,9 +448,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  topSection: {marginTop: 60, alignItems: 'center'},
+  topSection: {marginTop: 60, alignItems: 'center', zIndex: 10},
   nameText: {fontSize: 32, color: 'white', fontWeight: 'bold'},
   statusText: {fontSize: 18, color: '#bbb', marginTop: 10},
+  centerArea: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   imageContainer: {
     width: 200,
     height: 200,
@@ -356,18 +466,33 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   profileImage: {width: '100%', height: '100%'},
+  remoteVideo: {width: '100%', height: '100%', backgroundColor: '#000'},
+  localVideoContainer: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    width: 100,
+    height: 150,
+    borderRadius: 15,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#fff',
+    elevation: 5,
+  },
+  localVideo: {width: '100%', height: '100%'},
   controls: {
     flexDirection: 'row',
     width: '100%',
-    justifyContent: 'space-evenly',
+    justifyContent: 'space-around',
+    alignItems: 'flex-end',
+    paddingHorizontal: 10,
     marginBottom: 40,
-    flexWrap: 'wrap',
   },
-  iconBtnContainer: {alignItems: 'center', width: 70, marginBottom: 20},
+  iconBtnContainer: {alignItems: 'center', width: 70},
   iconBtn: {
-    width: 55,
-    height: 55,
-    borderRadius: 28,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: '#333',
     alignItems: 'center',
     justifyContent: 'center',
@@ -375,13 +500,19 @@ const styles = StyleSheet.create({
   activeBtn: {backgroundColor: 'white'},
   hangupBtn: {
     backgroundColor: '#ff3b30',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  btnLabel: {color: 'white', marginTop: 8, fontSize: 11, textAlign: 'center'},
+  btnLabel: {
+    color: 'white',
+    marginTop: 8,
+    fontSize: 11,
+    textAlign: 'center',
+    width: '100%',
+  },
 });
 
 export default AudioCallScreen;

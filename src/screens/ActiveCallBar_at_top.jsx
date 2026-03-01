@@ -1,94 +1,115 @@
-import React, {useState, useContext, useEffect} from 'react'; // Added useContext, useEffect
+import React, {useState, useContext} from 'react';
 import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
-  doc,
-  runTransaction,
   collection,
   serverTimestamp,
+  addDoc,
 } from '@react-native-firebase/firestore';
-import {RTCView} from 'react-native-webrtc'; // Added for persistent audio
-import {AuthContext} from '../Auth/AuthContext'; // Import context
+import {RTCView} from 'react-native-webrtc';
+import {AuthContext} from '../Auth/AuthContext';
+import InCallManager from 'react-native-incall-manager';
+import {getSocket} from '../services/socketService';
 
 const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
   const db = getFirestore();
-  const {localStream, setLocalStream, remoteStream, setRemoteStream, pc} =
-    useContext(AuthContext); // Access global stream
-  const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(false);
+  const {
+    localStream,
+    setLocalStream,
+    remoteStream,
+    setRemoteStream,
+    pc,
+    isMuted,
+    toggleMute,
+    isVideoOn,
+    toggleVideo,
+    callDuration,
+    setCallDuration,
+    setCallStatus,
+    setActiveCall,
+    setIsFrontCamera,
+    setIsRemoteFrontCamera,
+  } = useContext(AuthContext);
+
   const [localEnding, setLocalEnding] = useState(false);
 
-  // [ADDED] Hardware control for Mute
-  useEffect(() => {
-    if (localStream) {
-      localStream.getAudioTracks().forEach(t => (t.enabled = !isMuted));
-    }
-  }, [isMuted, localStream]);
+  const otherUserId =
+    callData?.callerId === myId ? callData?.receiverId : callData?.callerId;
 
-  // [ADDED] Hardware control for Camera
-  useEffect(() => {
-    if (localStream) {
-      localStream.getVideoTracks().forEach(t => (t.enabled = isCameraOn));
-    }
-  }, [isCameraOn, localStream]);
+  const formatTime = seconds => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs
+      .toString()
+      .padStart(2, '0')}`;
+  };
+
+  // Mute toggle — works on hardware track via toggleMute from context
+  const handleToggleMute = () => toggleMute(!isMuted);
+
+  // Video toggle — enables track + notifies other person via socket
+  const handleToggleVideo = () => {
+    const newVideoState = !isVideoOn;
+    toggleVideo(newVideoState);
+    getSocket()?.emit('videoToggle', {
+      to: otherUserId,
+      isVideoOn: newVideoState,
+    });
+  };
 
   const handleHangup = async () => {
     if (localEnding) return;
     setLocalEnding(true);
 
-    const docId = callData.id || myId;
-    const callDocRef = doc(db, 'calls', docId);
+    // Notify other person — call ends on both sides
+    getSocket()?.emit('endCall', {to: otherUserId});
 
+    // Stop all local tracks
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+
+    // Close peer connection
+    if (pc.current) {
+      pc.current.close();
+      pc.current = null;
+    }
+
+    setRemoteStream(null);
+    setCallStatus('idle');
+    setCallDuration(0);
+    setIsFrontCamera(true);
+    setIsRemoteFrontCamera(false);
+    InCallManager.stop();
+
+    // Write call history to Firebase
     try {
-      // [WEBRTC CLEANUP]
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        setLocalStream(null);
-      }
-
-      if (pc.current) {
-        pc.current.close();
-      }
-      setRemoteStream(null);
-
-      await runTransaction(db, async transaction => {
-        const callSnapshot = await transaction.get(callDocRef);
-
-        if (!callSnapshot.exists() || callSnapshot.data().status === 'ending') {
-          return;
-        }
-
-        transaction.update(callDocRef, {status: 'ending'});
-
-        const historyTimestamp = serverTimestamp();
-        const historyRef1 = doc(collection(db, 'call_history'));
-        const historyRef2 = doc(collection(db, 'call_history'));
-
-        transaction.set(historyRef1, {
-          userId: callData.callerId,
-          friendId: callData.receiverId,
-          type: 'outbound',
-          timestamp: historyTimestamp,
-        });
-        transaction.set(historyRef2, {
-          userId: callData.receiverId,
-          friendId: callData.callerId,
-          type: 'inbound',
-          timestamp: historyTimestamp,
-        });
-
-        transaction.delete(callDocRef);
+      const ts = serverTimestamp();
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.callerId,
+        friendId: callData.receiverId,
+        type: 'outbound',
+        timestamp: ts,
+      });
+      await addDoc(collection(db, 'call_history'), {
+        userId: callData.receiverId,
+        friendId: callData.callerId,
+        type: 'inbound',
+        timestamp: ts,
       });
     } catch (e) {
-      console.error('Error hanging up:', e);
-      setLocalEnding(false);
+      console.log('History write error:', e);
     }
+
+    // Clear active call — removes the bar from screen
+    setActiveCall(null);
   };
 
   const aliasName =
-    callData.callerId === myId ? callData.receiverName : callData.callerName;
+    callData?.callerId === myId ? callData?.receiverName : callData?.callerName;
 
   return (
     <TouchableOpacity
@@ -96,7 +117,7 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       onPress={onPressBar}
       disabled={localEnding}
       style={[styles.floatingBar, localEnding && {opacity: 0.8}]}>
-      {/* Persist the remote audio track via RTCView while minimized */}
+      {/* Hidden RTCView keeps audio alive while bar is showing */}
       {remoteStream && (
         <RTCView
           streamURL={remoteStream.toURL()}
@@ -104,8 +125,9 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       )}
 
+      {/* Mute button */}
       <TouchableOpacity
-        onPress={() => setIsMuted(!isMuted)}
+        onPress={handleToggleMute}
         disabled={localEnding}
         style={styles.sideBtn}>
         <Ionicons
@@ -115,21 +137,25 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       </TouchableOpacity>
 
+      {/* Video toggle button */}
       <TouchableOpacity
-        onPress={() => setIsCameraOn(!isCameraOn)}
+        onPress={handleToggleVideo}
         disabled={localEnding}
         style={styles.sideBtn}>
         <Ionicons
-          name={isCameraOn ? 'videocam' : 'videocam-outline'}
+          name={isVideoOn ? 'videocam' : 'videocam-outline'}
           size={24}
-          color={isCameraOn ? '#4175DF' : 'white'}
+          color={isVideoOn ? '#4175DF' : 'white'}
         />
       </TouchableOpacity>
 
       <Text style={styles.aliasText}>
-        {localEnding ? 'Ending...' : aliasName}
+        {localEnding
+          ? 'Ending...'
+          : `${aliasName} (${formatTime(callDuration)})`}
       </Text>
 
+      {/* Hangup button */}
       <TouchableOpacity
         onPress={handleHangup}
         disabled={localEnding}

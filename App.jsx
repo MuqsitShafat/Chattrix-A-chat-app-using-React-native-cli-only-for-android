@@ -9,10 +9,6 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
-  onSnapshot,
-  collection,
-  query,
-  where,
 } from '@react-native-firebase/firestore';
 
 import {
@@ -31,10 +27,17 @@ import AuthStack from './src/Navigation/AuthStack';
 import ActiveCallBar_at_top from './src/screens/ActiveCallBar_at_top';
 import AudioCallScreen from './src/screens/AudioCallScreen';
 import {AuthProvider, AuthContext} from './src/Auth/AuthContext';
+// ✅ NEW
+import {
+  connectSocket,
+  disconnectSocket,
+  getSocket,
+} from './src/services/socketService';
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
 
+// ✅ TabNavigator — completely unchanged
 const TabNavigator = () => (
   <Tab.Navigator
     screenOptions={({route}) => ({
@@ -130,61 +133,59 @@ const TabNavigator = () => (
 );
 
 const AppContent = () => {
-  // Use global context instead of local state
-  const {user, loading, activeCall, setActiveCall} = useContext(AuthContext);
+  const {user, loading, activeCall, setActiveCall, setCallStatus} =
+    useContext(AuthContext);
+
   const db = getFirestore();
   const navigationRef = useRef();
   const [isMinimized, setIsMinimized] = useState(false);
 
+  // ✅ REPLACED: Firestore call listener → Socket.IO call listener
   useEffect(() => {
     if (!user) {
+      // User logged out — disconnect socket and clear call
+      disconnectSocket();
       setActiveCall(null);
       setIsMinimized(false);
       return;
     }
 
-    let unsubscribeOutbound = null;
+    // Connect socket using Firebase UID as the unique caller ID
+    const socket = connectSocket(user.uid);
 
-    const unsubscribeInbound = onSnapshot(
-      doc(db, 'calls', user.uid),
-      snapshot => {
-        if (!user) return;
+    // Incoming call from another user
+    socket.on('newCall', data => {
+      setActiveCall({
+        callerId: data.callerId,
+        callerName: data.callerName,
+        callerPic: data.callerPic,
+        receiverId: data.receiverId,
+        receiverName: data.receiverName,
+        receiverPic: data.receiverPic,
+        rtcMessage: data.rtcMessage, // offer from caller
+        isIncoming: true,
+      });
+      setCallStatus('incoming');
+      setIsMinimized(false); // Show full call screen immediately
+    });
 
-        if (snapshot && snapshot.exists()) {
-          const callData = snapshot.data();
-          setActiveCall({...callData, id: user.uid});
-        } else {
-          const q = query(
-            collection(db, 'calls'),
-            where('callerId', '==', user.uid),
-          );
-
-          if (unsubscribeOutbound) unsubscribeOutbound();
-
-          unsubscribeOutbound = onSnapshot(
-            q,
-            querySnap => {
-              if (user && querySnap && !querySnap.empty) {
-                const outboundData = querySnap.docs[0].data();
-                setActiveCall({...outboundData, id: querySnap.docs[0].id});
-              } else {
-                setActiveCall(null);
-                setIsMinimized(false);
-              }
-            },
-            error => console.log('Outbound Error:', error),
-          );
-        }
-      },
-      error => console.log('Inbound Error:', error),
-    );
+    // Other person cancelled/hung up before we even answered
+    socket.on('remoteHangup', () => {
+      setActiveCall(null);
+      setIsMinimized(false);
+      setCallStatus('idle');
+    });
 
     return () => {
-      unsubscribeInbound();
-      if (unsubscribeOutbound) unsubscribeOutbound();
+      const s = getSocket();
+      if (s) {
+        s.off('newCall');
+        s.off('remoteHangup');
+      }
     };
   }, [user]);
 
+  // ✅ Online/offline status — completely unchanged
   useEffect(() => {
     const updateStatus = async status => {
       const auth = getAuth();
@@ -219,6 +220,7 @@ const AppContent = () => {
     };
   }, [user]);
 
+  // ✅ Google + BootSplash — completely unchanged
   useEffect(() => {
     GoogleSignin.configure({
       webClientId:
@@ -263,6 +265,7 @@ const AppContent = () => {
             />
           </Drawer.Navigator>
 
+          {/* ✅ Full call screen Modal — unchanged */}
           <Modal
             visible={showFullCall}
             animationType="slide"
@@ -280,6 +283,7 @@ const AppContent = () => {
             )}
           </Modal>
 
+          {/* ✅ Minimized call bar — unchanged */}
           {showBar && activeCall && (
             <ActiveCallBar_at_top
               callData={activeCall}

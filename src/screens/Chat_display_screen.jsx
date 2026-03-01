@@ -32,20 +32,22 @@ import {
   arrayUnion,
 } from '@react-native-firebase/firestore';
 import {AuthContext} from '../Auth/AuthContext';
+// ✅ NEW
+import {getSocket} from '../services/socketService';
 
 const Chat_display_screen = ({navigation, route}) => {
   const friendId = route?.params?.friendId;
   const friendName = route?.params?.friendName || 'User';
   const initialProfilePic = route?.params?.profilePic;
 
-  const {user} = useContext(AuthContext);
+  // ✅ Added setActiveCall to destructure
+  const {user, activeCall, setActiveCall} = useContext(AuthContext);
   const [onlineStatus, setOnlineStatus] = useState('Offline');
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const {activeCall} = useContext(AuthContext); //? Assuming activeCall a global variable dfor diabling call button
   const db = getFirestore();
   const scrollViewRef = useRef();
   const sendAnim = useRef(new Animated.Value(0)).current;
@@ -116,34 +118,30 @@ const Chat_display_screen = ({navigation, route}) => {
     return () => unsubscribe();
   }, [chatId]);
 
-  // FIX: REWRITTEN CALL LOGIC
-// Optimized Call Logic for Chat Display
-const handleAudioCall = async () => {
-  if (!friendId || !user || activeCall) return;
+  // ✅ UPDATED: Socket-based call initiation — no Firebase calls doc needed
+  const handleAudioCall = () => {
+    if (!friendId || !user || activeCall) return;
 
-  try {
-    // 1. Initiate the Active Call Signal
-    // We only create the 'calls' document. 
-    // The history will be recorded by the Hangup function in the Call Screen.
-    await setDoc(doc(db, 'calls', friendId), {
+    const socket = getSocket();
+    if (!socket) {
+      Alert.alert('Error', 'Not connected to server');
+      return;
+    }
+
+    // Build call data
+    const callData = {
       callerId: user.uid,
-      callerName: user.displayName || 'Chattrix User',
+      callerName: user.displayName || 'User',
       callerPic: user.photoURL || '',
       receiverId: friendId,
       receiverName: friendName,
       receiverPic: initialProfilePic || '',
-      status: 'dialing',
-      type: 'audio',
-      createdAt: serverTimestamp(), // Modular Firestore helper
-    });
+    };
 
-    // Note: No need to navigate. Your App.jsx listener 
-    // handles showing the calling UI automatically.
-  } catch (error) {
-    console.error("Call Initiation Error:", error);
-    Alert.alert('Error', 'Could not start call');
-  }
-};
+    // Set active call locally — this opens the Modal in App.jsx
+    // AudioCallScreen will send the actual offer once it mounts
+    setActiveCall({...callData, isIncoming: false});
+  };
 
   const sendMessage = async () => {
     if (messageText.trim().length === 0 || !chatId) return;
@@ -354,18 +352,12 @@ const handleAudioCall = async () => {
           ) : (
             <>
               <TouchableOpacity
-                style={[
-                  styles.call_icon,
-                  // If activeCall exists, we apply a faded effect and maybe a different background
-                  activeCall && {opacity: 0.6},
-                ]}
+                style={[styles.call_icon, activeCall && {opacity: 0.6}]}
                 onPress={handleAudioCall}
-                disabled={!!activeCall} // DISABLING the button if any call is active
-              >
+                disabled={!!activeCall}>
                 <Icon
                   name="call-outline"
                   size={37}
-                  // If activeCall is true, color becomes Gray/Black, otherwise it's your Purple
                   color={activeCall ? '#878787' : '#510DC0'}
                 />
               </TouchableOpacity>
