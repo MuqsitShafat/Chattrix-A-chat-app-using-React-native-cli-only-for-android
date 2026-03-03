@@ -9,8 +9,11 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
+  collection,
+  query,
+  where,
+  getDocs,
 } from '@react-native-firebase/firestore';
-
 import {
   NavigationContainer,
   getFocusedRouteNameFromRoute,
@@ -26,8 +29,8 @@ import Custom_Drawer from './src/Navigation/Custom_Drawer';
 import AuthStack from './src/Navigation/AuthStack';
 import ActiveCallBar_at_top from './src/screens/ActiveCallBar_at_top';
 import AudioCallScreen from './src/screens/AudioCallScreen';
+import IncomingCallScreen from './src/screens/IncomingCallScreen';
 import {AuthProvider, AuthContext} from './src/Auth/AuthContext';
-// ✅ NEW
 import {
   connectSocket,
   disconnectSocket,
@@ -37,19 +40,16 @@ import {
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
 
-// ✅ TabNavigator — completely unchanged
 const TabNavigator = () => (
   <Tab.Navigator
     screenOptions={({route}) => ({
       tabBarIcon: ({focused, color, size}) => {
         let iconName;
-        if (route.name === 'Call') {
-          iconName = focused ? 'call' : 'call-outline';
-        } else if (route.name === 'Home_Chat_navigator') {
+        if (route.name === 'Call') iconName = focused ? 'call' : 'call-outline';
+        else if (route.name === 'Home_Chat_navigator')
           iconName = focused ? 'home' : 'home-outline';
-        } else if (route.name === 'Settings') {
+        else if (route.name === 'Settings')
           iconName = focused ? 'settings' : 'settings-outline';
-        }
         return <Icon name={iconName} size={size} color={color} />;
       },
       tabBarActiveTintColor: '#4175DF',
@@ -83,9 +83,8 @@ const TabNavigator = () => (
             routeName === 'Chat' ||
             routeName === 'Add_Contact' ||
             routeName === 'AudioCallScreen'
-          ) {
+          )
             return {display: 'none'};
-          }
           return {
             height: 60,
             borderRadius: 30,
@@ -114,9 +113,8 @@ const TabNavigator = () => (
               'Language',
               'About',
             ].includes(routeName)
-          ) {
+          )
             return {display: 'none'};
-          }
           return {
             height: 60,
             borderRadius: 30,
@@ -133,44 +131,90 @@ const TabNavigator = () => (
 );
 
 const AppContent = () => {
-  const {user, loading, activeCall, setActiveCall, setCallStatus} =
-    useContext(AuthContext);
+  const {
+    user,
+    loading,
+    activeCall,
+    setActiveCall,
+    setCallStatus,
+    setIsMuted,
+    setIsVideoOn,
+    setCallDuration,
+    setIsFrontCamera,
+    setIsRemoteFrontCamera,
+    stopCallTimer,
+  } = useContext(AuthContext);
 
   const db = getFirestore();
   const navigationRef = useRef();
   const [isMinimized, setIsMinimized] = useState(false);
 
-  // ✅ REPLACED: Firestore call listener → Socket.IO call listener
+  // ✅ Track if a remoteHangup arrived WHILE we were still fetching alias
+  const pendingCancelRef = useRef(false);
+
+  const isIncoming = !!activeCall?.isIncoming;
+
   useEffect(() => {
     if (!user) {
-      // User logged out — disconnect socket and clear call
       disconnectSocket();
       setActiveCall(null);
       setIsMinimized(false);
       return;
     }
 
-    // Connect socket using Firebase UID as the unique caller ID
     const socket = connectSocket(user.uid);
 
-    // Incoming call from another user
-    socket.on('newCall', data => {
+    socket.on('newCall', async data => {
+      // ✅ Reset cancel flag for this new call
+      pendingCancelRef.current = false;
+
+      setIsMuted(false);
+      setIsVideoOn(false);
+      setCallDuration(0);
+      setIsFrontCamera(true);
+      setIsRemoteFrontCamera(false);
+
+      // Fetch alias name
+      let displayCallerName = data.callerName;
+      try {
+        const friendsRef = collection(db, 'users', user.uid, 'contacts');
+        const q = query(friendsRef, where('friendId', '==', data.callerId));
+        const filteredSnap = await getDocs(q);
+        if (!filteredSnap.empty) {
+          const friendData = filteredSnap.docs[0].data();
+          if (friendData.aliasName) {
+            displayCallerName = friendData.aliasName;
+          }
+        }
+      } catch (e) {
+        console.log('Alias fetch error:', e);
+      }
+
+      // ✅ If caller already hung up while we were fetching alias — ignore
+      if (pendingCancelRef.current) {
+        console.log('Caller cancelled before screen showed — ignoring');
+        pendingCancelRef.current = false;
+        return;
+      }
+
       setActiveCall({
         callerId: data.callerId,
-        callerName: data.callerName,
+        callerName: displayCallerName,
         callerPic: data.callerPic,
         receiverId: data.receiverId,
         receiverName: data.receiverName,
         receiverPic: data.receiverPic,
-        rtcMessage: data.rtcMessage, // offer from caller
+        rtcMessage: data.rtcMessage,
         isIncoming: true,
       });
       setCallStatus('incoming');
-      setIsMinimized(false); // Show full call screen immediately
+      setIsMinimized(false);
     });
 
-    // Other person cancelled/hung up before we even answered
     socket.on('remoteHangup', () => {
+      // ✅ If newCall is still being processed (async alias fetch), mark cancel
+      pendingCancelRef.current = true;
+      stopCallTimer();
       setActiveCall(null);
       setIsMinimized(false);
       setCallStatus('idle');
@@ -185,22 +229,19 @@ const AppContent = () => {
     };
   }, [user]);
 
-  // ✅ Online/offline status — completely unchanged
   useEffect(() => {
     const updateStatus = async status => {
       const auth = getAuth();
       const currentUser = auth.currentUser;
       if (currentUser?.uid) {
         try {
-          const userRef = doc(db, 'users', currentUser.uid);
-          await updateDoc(userRef, {
-            status: status,
+          await updateDoc(doc(db, 'users', currentUser.uid), {
+            status,
             lastSeen: serverTimestamp(),
           });
         } catch (error) {
-          if (error.code !== 'firestore/permission-denied') {
+          if (error.code !== 'firestore/permission-denied')
             console.error('Error updating status:', error);
-          }
         }
       }
     };
@@ -208,9 +249,7 @@ const AppContent = () => {
     if (user) updateStatus('online');
 
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (user) {
-        updateStatus(nextAppState === 'active' ? 'online' : 'offline');
-      }
+      if (user) updateStatus(nextAppState === 'active' ? 'online' : 'offline');
     });
 
     return () => {
@@ -220,7 +259,6 @@ const AppContent = () => {
     };
   }, [user]);
 
-  // ✅ Google + BootSplash — completely unchanged
   useEffect(() => {
     GoogleSignin.configure({
       webClientId:
@@ -232,8 +270,20 @@ const AppContent = () => {
 
   if (loading) return null;
 
-  const showFullCall = !!(user && activeCall && !isMinimized);
-  const showBar = !!(user && activeCall && isMinimized);
+  const handleAcceptCall = () => {
+    setActiveCall(prev => ({...prev, isIncoming: false}));
+    setCallStatus('connected');
+  };
+
+  const handleRejectCall = () => {
+    getSocket()?.emit('endCall', {to: activeCall?.callerId});
+    setActiveCall(null);
+    setCallStatus('idle');
+  };
+
+  const showIncoming = !!(user && activeCall && isIncoming);
+  const showFullCall = !!(user && activeCall && !isIncoming && !isMinimized);
+  const showBar = !!(user && activeCall && !isIncoming && isMinimized);
 
   return (
     <NavigationContainer ref={navigationRef}>
@@ -265,7 +315,20 @@ const AppContent = () => {
             />
           </Drawer.Navigator>
 
-          {/* ✅ Full call screen Modal — unchanged */}
+          <Modal
+            visible={showIncoming}
+            animationType="slide"
+            transparent={false}
+            onRequestClose={handleRejectCall}>
+            {activeCall && (
+              <IncomingCallScreen
+                callData={activeCall}
+                onAccept={handleAcceptCall}
+                onReject={handleRejectCall}
+              />
+            )}
+          </Modal>
+
           <Modal
             visible={showFullCall}
             animationType="slide"
@@ -283,7 +346,6 @@ const AppContent = () => {
             )}
           </Modal>
 
-          {/* ✅ Minimized call bar — unchanged */}
           {showBar && activeCall && (
             <ActiveCallBar_at_top
               callData={activeCall}

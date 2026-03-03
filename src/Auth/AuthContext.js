@@ -11,16 +11,33 @@ export const AuthProvider = ({children}) => {
   const [remoteStream, setRemoteStream] = useState(null);
 
   const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOn, setIsVideoOn] = useState(false); // false = audio only by default
+  const [isVideoOn, setIsVideoOn] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [callStatus, setCallStatus] = useState('idle');
 
-  // Camera flip states
   const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [isRemoteFrontCamera, setIsRemoteFrontCamera] = useState(false);
 
-  // pc starts null — created fresh every call
   const pc = useRef(null);
+
+  // ✅ Timer lives in context — persists across screen mounts/unmounts
+  const timerRef = useRef(null);
+
+  const startCallTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setCallDuration(0);
+    timerRef.current = setInterval(() => {
+      setCallDuration(prev => prev + 1);
+    }, 1000);
+  };
+
+  const stopCallTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setCallDuration(0);
+  };
 
   const toggleMute = muted => {
     setIsMuted(muted);
@@ -47,6 +64,13 @@ export const AuthProvider = ({children}) => {
       setLoading(false);
     });
     return unsubscribe;
+  }, []);
+
+  // ✅ Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, []);
 
   return (
@@ -76,6 +100,8 @@ export const AuthProvider = ({children}) => {
         setIsFrontCamera,
         isRemoteFrontCamera,
         setIsRemoteFrontCamera,
+        startCallTimer,
+        stopCallTimer,
       }}>
       {children}
     </AuthContext.Provider>

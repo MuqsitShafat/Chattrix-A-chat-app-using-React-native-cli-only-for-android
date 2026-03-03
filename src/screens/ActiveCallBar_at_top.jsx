@@ -26,11 +26,11 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
     isVideoOn,
     toggleVideo,
     callDuration,
-    setCallDuration,
     setCallStatus,
     setActiveCall,
     setIsFrontCamera,
     setIsRemoteFrontCamera,
+    stopCallTimer, // ✅
   } = useContext(AuthContext);
 
   const [localEnding, setLocalEnding] = useState(false);
@@ -46,10 +46,8 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       .padStart(2, '0')}`;
   };
 
-  // Mute toggle — works on hardware track via toggleMute from context
   const handleToggleMute = () => toggleMute(!isMuted);
 
-  // Video toggle — enables track + notifies other person via socket
   const handleToggleVideo = () => {
     const newVideoState = !isVideoOn;
     toggleVideo(newVideoState);
@@ -63,16 +61,13 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
     if (localEnding) return;
     setLocalEnding(true);
 
-    // Notify other person — call ends on both sides
     getSocket()?.emit('endCall', {to: otherUserId});
 
-    // Stop all local tracks
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       setLocalStream(null);
     }
 
-    // Close peer connection
     if (pc.current) {
       pc.current.close();
       pc.current = null;
@@ -80,12 +75,11 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
 
     setRemoteStream(null);
     setCallStatus('idle');
-    setCallDuration(0);
+    stopCallTimer(); // ✅ stops and resets global timer
     setIsFrontCamera(true);
     setIsRemoteFrontCamera(false);
     InCallManager.stop();
 
-    // Write call history to Firebase
     try {
       const ts = serverTimestamp();
       await addDoc(collection(db, 'call_history'), {
@@ -104,7 +98,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       console.log('History write error:', e);
     }
 
-    // Clear active call — removes the bar from screen
     setActiveCall(null);
   };
 
@@ -117,7 +110,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
       onPress={onPressBar}
       disabled={localEnding}
       style={[styles.floatingBar, localEnding && {opacity: 0.8}]}>
-      {/* Hidden RTCView keeps audio alive while bar is showing */}
       {remoteStream && (
         <RTCView
           streamURL={remoteStream.toURL()}
@@ -125,7 +117,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       )}
 
-      {/* Mute button */}
       <TouchableOpacity
         onPress={handleToggleMute}
         disabled={localEnding}
@@ -137,7 +128,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
         />
       </TouchableOpacity>
 
-      {/* Video toggle button */}
       <TouchableOpacity
         onPress={handleToggleVideo}
         disabled={localEnding}
@@ -155,7 +145,6 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
           : `${aliasName} (${formatTime(callDuration)})`}
       </Text>
 
-      {/* Hangup button */}
       <TouchableOpacity
         onPress={handleHangup}
         disabled={localEnding}

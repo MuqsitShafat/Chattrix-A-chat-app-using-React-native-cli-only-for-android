@@ -6,6 +6,7 @@ import {
   Image,
   TouchableOpacity,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -26,6 +27,7 @@ import {
 import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
 import {getSocket} from '../services/socketService';
+import { getAuth } from '@react-native-firebase/auth';
 
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
@@ -40,23 +42,41 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     isVideoOn,
     toggleVideo,
     callDuration,
-    setCallDuration,
     setCallStatus,
     setActiveCall,
     isFrontCamera,
     setIsFrontCamera,
     isRemoteFrontCamera,
     setIsRemoteFrontCamera,
+    setIsMuted,
+    setIsVideoOn,
+    startCallTimer,
+    stopCallTimer,
   } = useContext(AuthContext);
 
   const callData = route?.params;
-
   const isCaller = callData?.callerId === myId;
   const otherUserId = isCaller ? callData?.receiverId : callData?.callerId;
   const aliasName = isCaller ? callData?.receiverName : callData?.callerName;
-  const initialProfilePic = isCaller
-    ? callData?.receiverPic
-    : callData?.callerPic;
+
+  // ✅ Always show the OTHER person's pic in center
+  // Caller sees receiver's pic, Receiver sees caller's pic
+  const rawProfilePic = isCaller ? callData?.receiverPic : callData?.callerPic;
+
+  // ✅ Fix Google/Facebook URL for high quality
+  let photoUrl = rawProfilePic;
+  if (photoUrl && typeof photoUrl === 'string') {
+    if (photoUrl.includes('googleusercontent.com')) {
+      photoUrl = photoUrl.replace('s96-c', 's400-c');
+    } else if (photoUrl.includes('facebook.com')) {
+      photoUrl = `${photoUrl}?type=large`;
+    }
+  }
+
+  const displayImage =
+    photoUrl && photoUrl !== ''
+      ? {uri: photoUrl}
+      : require('../images/User_profile_icon.jpg');
 
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [localEnding, setLocalEnding] = useState(false);
@@ -66,7 +86,6 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
 
   const handleToggleMute = () => toggleMute(!isMuted);
 
-  // Video toggle — notifies other person via socket
   const handleToggleVideo = () => {
     const newVideoState = !isVideoOn;
     toggleVideo(newVideoState);
@@ -100,9 +119,7 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     });
 
     pc.current.ontrack = event => {
-      if (event.streams?.[0]) {
-        setRemoteStream(event.streams[0]);
-      }
+      if (event.streams?.[0]) setRemoteStream(event.streams[0]);
     };
 
     pc.current.onicecandidate = event => {
@@ -124,6 +141,13 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   };
 
   useEffect(() => {
+    setIsMuted(false);
+    setIsVideoOn(false);
+    setIsFrontCamera(true);
+    setIsRemoteFrontCamera(false);
+  }, []);
+
+  useEffect(() => {
     const socket = getSocket();
     if (!socket || !callData) return;
 
@@ -131,17 +155,21 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       const allowed = await requestCallPermissions();
       if (!allowed) return;
 
-      // Start as audio only
-      InCallManager.start({media: 'audio'});
+      InCallManager.start({media: 'audio', auto: true, ringback: ''});
       InCallManager.setKeepScreenOn(true);
+      InCallManager.setSpeakerphoneOn(false);
+      InCallManager.setForceSpeakerphoneOn(false);
 
       try {
         const stream = await mediaDevices.getUserMedia({
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
           video: {facingMode: 'user', width: 640, height: 480},
         });
 
-        // Audio on, video track disabled until user turns it on
         stream.getAudioTracks().forEach(t => (t.enabled = true));
         stream.getVideoTracks().forEach(t => (t.enabled = false));
 
@@ -151,11 +179,12 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
         if (isCaller) {
           const offer = await pc.current.createOffer();
           await pc.current.setLocalDescription(offer);
+          const auth = getAuth();
           socket.emit('call', {
             calleeId: otherUserId,
             callerId: myId,
             callerName: callData.callerName,
-            callerPic: callData.callerPic,
+            callerPic: auth.currentUser?.photoURL || '', // ✅ always fresh from Auth
             receiverId: otherUserId,
             receiverName: callData.receiverName,
             receiverPic: callData.receiverPic,
@@ -212,11 +241,42 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       setIsRemoteFrontCamera(data.isFrontCamera);
     });
 
-    // When other person toggles their video
-    socket.on('remoteVideoToggle', data => {
-      console.log('Remote video toggled:', data.isVideoOn);
-      // remoteStream display is already handled by RTCView
-      // This can be used to show/hide a UI indicator if needed
+    socket.on('videoToggle', data => {
+      if (data.isVideoOn && !isVideoOn) {
+        Alert.alert('Video Call Request', `${aliasName} wants to start video`, [
+          {
+            text: 'Decline',
+            style: 'cancel',
+            onPress: () => {
+              getSocket()?.emit('videoToggleResponse', {
+                to: otherUserId,
+                accepted: false,
+              });
+            },
+          },
+          {
+            text: 'Accept',
+            onPress: () => {
+              toggleVideo(true);
+              getSocket()?.emit('videoToggleResponse', {
+                to: otherUserId,
+                accepted: true,
+              });
+            },
+          },
+        ]);
+      } else {
+        toggleVideo(data.isVideoOn);
+      }
+    });
+
+    socket.on('videoToggleResponse', data => {
+      if (data.accepted) {
+        toggleVideo(true);
+      } else {
+        Alert.alert('Video Declined', `${aliasName} declined the video call`);
+        toggleVideo(false);
+      }
     });
 
     socket.on('remoteHangup', () => {
@@ -229,34 +289,37 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       socket.off('callAnswered');
       socket.off('ICEcandidate');
       socket.off('cameraSwitch');
-      socket.off('remoteVideoToggle');
+      socket.off('videoToggle');
+      socket.off('videoToggleResponse');
       socket.off('remoteHangup');
     };
   }, []);
 
-  // Sync mute/video to hardware tracks
   useEffect(() => {
     if (localStream) {
       localStream.getAudioTracks().forEach(t => (t.enabled = !isMuted));
       localStream.getVideoTracks().forEach(t => (t.enabled = isVideoOn));
     }
-    // Switch InCallManager mode when video turns on/off
-    InCallManager.start({media: isVideoOn ? 'video' : 'audio'});
+    if (isVideoOn) {
+      InCallManager.start({media: 'video'});
+      InCallManager.setSpeakerphoneOn(true);
+    } else {
+      InCallManager.start({media: 'audio'});
+      InCallManager.setSpeakerphoneOn(isSpeakerOn);
+    }
   }, [isMuted, isVideoOn, localStream]);
 
   useEffect(() => {
-    InCallManager.setSpeakerphoneOn(isSpeakerOn);
+    if (!isVideoOn) {
+      InCallManager.setSpeakerphoneOn(isSpeakerOn);
+    }
   }, [isSpeakerOn]);
 
   useEffect(() => {
-    let interval;
     if (remoteStream) {
       setCallConnected(true);
-      interval = setInterval(() => setCallDuration(p => p + 1), 1000);
-    } else {
-      setCallDuration(0);
+      startCallTimer();
     }
-    return () => clearInterval(interval);
   }, [remoteStream]);
 
   const formatTime = seconds => {
@@ -282,9 +345,7 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     if (localEnding) return;
     setLocalEnding(true);
 
-    if (shouldEmit) {
-      getSocket()?.emit('endCall', {to: otherUserId});
-    }
+    if (shouldEmit) getSocket()?.emit('endCall', {to: otherUserId});
 
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop());
@@ -298,13 +359,12 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
 
     setRemoteStream(null);
     setCallStatus('idle');
-    setCallDuration(0);
+    stopCallTimer();
     setIsFrontCamera(true);
     setIsRemoteFrontCamera(false);
     iceCandidatesQueue.current = [];
     InCallManager.stop();
 
-    // Write call history to Firebase
     try {
       const ts = serverTimestamp();
       await addDoc(collection(db, 'call_history'), {
@@ -333,49 +393,64 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     return 'Connecting...';
   };
 
-  const displayImage = initialProfilePic
-    ? {uri: initialProfilePic}
-    : require('../images/User_profile_icon.jpg');
-
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.topSection}>
-        <Text style={styles.nameText}>{aliasName}</Text>
-        <Text style={styles.statusText}>{getStatusText()}</Text>
-      </View>
+    <View style={styles.container}>
+      {remoteStream && isVideoOn ? (
+        <RTCView
+          streamURL={remoteStream.toURL()}
+          style={StyleSheet.absoluteFill}
+          objectFit="cover"
+          mirror={isRemoteFrontCamera}
+        />
+      ) : (
+        <View style={styles.audioBackground} />
+      )}
 
-      <View style={styles.centerArea}>
-        {remoteStream && isVideoOn ? (
+      {localStream && isVideoOn && (
+        <View style={styles.localVideoContainer}>
           <RTCView
-            streamURL={remoteStream.toURL()}
-            style={styles.remoteVideo}
+            streamURL={localStream.toURL()}
+            style={styles.localVideo}
             objectFit="cover"
-            mirror={isRemoteFrontCamera}
+            zOrder={1}
+            mirror={isFrontCamera}
           />
-        ) : (
-          <View style={styles.imageContainer}>
-            <Image source={displayImage} style={styles.profileImage} />
-          </View>
-        )}
-
-        {localStream && isVideoOn && (
-          <View style={styles.localVideoContainer}>
-            <RTCView
-              streamURL={localStream.toURL()}
-              style={styles.localVideo}
-              objectFit="cover"
-              zOrder={1}
-              mirror={isFrontCamera}
-            />
-          </View>
-        )}
-      </View>
+        </View>
+      )}
 
       {remoteStream && !isVideoOn && (
         <RTCView
           streamURL={remoteStream.toURL()}
           style={{width: 1, height: 1, position: 'absolute', opacity: 0}}
         />
+      )}
+
+      {isVideoOn && (
+        <SafeAreaView style={styles.videoHangupContainer}>
+          <TouchableOpacity
+            style={styles.videoHangupBtn}
+            onPress={() => leaveCall(true)}>
+            <MaterialIcons name="call-end" size={28} color="white" />
+          </TouchableOpacity>
+        </SafeAreaView>
+      )}
+
+      <SafeAreaView style={styles.topOverlay}>
+        <Text style={styles.nameText}>{aliasName}</Text>
+        <Text style={styles.statusText}>{getStatusText()}</Text>
+      </SafeAreaView>
+
+      {/* ✅ Shows other person's pic — caller sees receiver, receiver sees caller */}
+      {!isVideoOn && (
+        <View style={styles.centerArea}>
+          <View style={styles.imageContainer}>
+            <Image
+              source={displayImage}
+              style={styles.profileImage}
+              resizeMode="cover"
+            />
+          </View>
+        </View>
       )}
 
       <View style={styles.controls}>
@@ -410,17 +485,21 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
           label="Minimize"
           isMaterial
         />
-        <TouchableOpacity
-          style={styles.iconBtnContainer}
-          onPress={() => leaveCall(true)}
-          activeOpacity={0.7}>
-          <View style={styles.hangupBtn}>
-            <MaterialIcons name="call-end" size={30} color="white" />
-          </View>
-          <Text style={styles.btnLabel}>{localEnding ? 'Ending' : 'End'}</Text>
-        </TouchableOpacity>
+        {!isVideoOn && (
+          <TouchableOpacity
+            style={styles.iconBtnContainer}
+            onPress={() => leaveCall(true)}
+            activeOpacity={0.7}>
+            <View style={styles.hangupBtn}>
+              <MaterialIcons name="call-end" size={30} color="white" />
+            </View>
+            <Text style={styles.btnLabel}>
+              {localEnding ? 'Ending' : 'End'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -442,18 +521,72 @@ const ControlBtn = ({onPress, active, icon, label, isMaterial}) => (
 );
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  container: {flex: 1, backgroundColor: '#1a1a1a'},
+  audioBackground: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#1a1a1a',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
-  topSection: {marginTop: 60, alignItems: 'center', zIndex: 10},
-  nameText: {fontSize: 32, color: 'white', fontWeight: 'bold'},
-  statusText: {fontSize: 18, color: '#bbb', marginTop: 10},
+  topOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingTop: 60,
+    zIndex: 10,
+  },
+  nameText: {
+    fontSize: 32,
+    color: 'white',
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: {width: 1, height: 1},
+    textShadowRadius: 4,
+  },
+  statusText: {
+    fontSize: 18,
+    color: '#ddd',
+    marginTop: 6,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: {width: 1, height: 1},
+    textShadowRadius: 4,
+  },
+  videoHangupContainer: {
+    position: 'absolute',
+    top: 0,
+    right: 20,
+    zIndex: 20,
+  },
+  videoHangupBtn: {
+    marginTop: 60,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#ff3b30',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 10,
+  },
+  localVideoContainer: {
+    position: 'absolute',
+    top: 60,
+    left: 16,
+    width: 100,
+    height: 150,
+    borderRadius: 15,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#fff',
+    elevation: 15,
+    zIndex: 15,
+  },
+  localVideo: {width: '100%', height: '100%'},
   centerArea: {
-    flex: 1,
-    width: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -462,38 +595,30 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 100,
     overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#333',
+    borderWidth: 3,
+    borderColor: '#555',
   },
   profileImage: {width: '100%', height: '100%'},
-  remoteVideo: {width: '100%', height: '100%', backgroundColor: '#000'},
-  localVideoContainer: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
-    width: 100,
-    height: 150,
-    borderRadius: 15,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#fff',
-    elevation: 5,
-  },
-  localVideo: {width: '100%', height: '100%'},
   controls: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    width: '100%',
     justifyContent: 'space-around',
     alignItems: 'flex-end',
     paddingHorizontal: 10,
-    marginBottom: 40,
+    paddingBottom: 40,
+    paddingTop: 20,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    zIndex: 10,
   },
   iconBtnContainer: {alignItems: 'center', width: 70},
   iconBtn: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#333',
+    backgroundColor: 'rgba(80,80,80,0.8)',
     alignItems: 'center',
     justifyContent: 'center',
   },

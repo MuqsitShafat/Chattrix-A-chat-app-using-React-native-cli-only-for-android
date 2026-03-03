@@ -9,11 +9,10 @@ import {
   BackHandler,
   Alert,
 } from 'react-native';
-import React, {useEffect, useState, useRef, useContext} from 'react'; // Added useContext
+import React, {useEffect, useState, useRef, useContext} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
 import LottieView from 'lottie-react-native';
-
 import {getAuth} from '@react-native-firebase/auth';
 import {
   getFirestore,
@@ -25,10 +24,10 @@ import {
   writeBatch,
   doc,
   getDoc,
-  setDoc,
   serverTimestamp,
 } from '@react-native-firebase/firestore';
-import {AuthContext} from '../Auth/AuthContext'; // Import AuthContext
+import {AuthContext} from '../Auth/AuthContext';
+import {getSocket} from '../services/socketService';
 
 const Call_screen = ({navigation}) => {
   const {t} = useTranslation();
@@ -37,8 +36,8 @@ const Call_screen = ({navigation}) => {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
-  // Use global activeCall from Context instead of local state
-  const {activeCall} = useContext(AuthContext);
+  // ✅ Added setActiveCall
+  const {activeCall, setActiveCall} = useContext(AuthContext);
 
   const isMounted = useRef(true);
   const auth = getAuth();
@@ -124,24 +123,33 @@ const Call_screen = ({navigation}) => {
     };
   }, [user]);
 
-  const handleHistoryCall = async (friendId, friendName) => {
+  // ✅ UPDATED: Socket-based with confirmation alert
+  const handleHistoryCall = (friendId, friendName) => {
     if (!friendId || !user || activeCall) return;
-    try {
-      await setDoc(doc(db, 'calls', friendId), {
-        callerId: user.uid,
-        callerName: user.displayName || 'Chattrix User',
-        callerPic: user.photoURL || '',
-        receiverId: friendId,
-        receiverName: friendName,
-        receiverPic: '',
-        status: 'dialing',
-        type: 'audio',
-        createdAt: serverTimestamp(),
-      });
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'Could not start call');
+
+    const socket = getSocket();
+    if (!socket) {
+      Alert.alert('Error', 'Not connected to server');
+      return;
     }
+
+    Alert.alert('Start Call', `Do you want to call ${friendName}?`, [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Call',
+        onPress: () => {
+          setActiveCall({
+            callerId: user.uid,
+            callerName: user.displayName || 'User',
+            callerPic: user.photoURL || '',
+            receiverId: friendId,
+            receiverName: friendName,
+            receiverPic: '',
+            isIncoming: false,
+          });
+        },
+      },
+    ]);
   };
 
   const deleteSelected = async () => {
@@ -366,16 +374,11 @@ const styles = StyleSheet.create({
   nameContainer: {flex: 1.5},
   iconContainer: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   timeContainer: {flex: 1.5, alignItems: 'flex-end'},
-
   userName: {fontSize: 22, color: 'black', fontFamily: 'IrishGrover-Regular'},
   user_time: {fontSize: 18, color: 'black', fontFamily: 'IrishGrover-Regular'},
   select_all: {fontSize: 20, color: 'white', fontFamily: 'IrishGrover-Regular'},
   directionText: {fontSize: 12, color: 'gray', marginLeft: 4},
-
-  tiltedArrow: {
-    transform: [{rotate: '45deg'}],
-  },
-
+  tiltedArrow: {transform: [{rotate: '45deg'}]},
   spacing: {marginTop: '19%'},
   emptyContainer: {
     flex: 1,
