@@ -12,9 +12,6 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
-  collection,
-  serverTimestamp,
-  addDoc,
 } from '@react-native-firebase/firestore';
 import {requestCallPermissions} from '../components/permissions';
 import {
@@ -27,7 +24,6 @@ import {
 import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
 import {getSocket} from '../services/socketService';
-import { getAuth } from '@react-native-firebase/auth';
 
 const AudioCallScreen = ({route, myId, onMinimize}) => {
   const db = getFirestore();
@@ -52,9 +48,12 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     setIsVideoOn,
     startCallTimer,
     stopCallTimer,
+    callInitialized,
+        triggerHangup,  // ✅ NEW
   } = useContext(AuthContext);
 
   const callData = route?.params;
+  console.log('🎬 AudioCallScreen callData.callerPic:', callData?.callerPic); // ADD
   const isCaller = callData?.callerId === myId;
   const otherUserId = isCaller ? callData?.receiverId : callData?.callerId;
   const aliasName = isCaller ? callData?.receiverName : callData?.callerName;
@@ -87,13 +86,21 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
   const handleToggleMute = () => toggleMute(!isMuted);
 
   const handleToggleVideo = () => {
-    const newVideoState = !isVideoOn;
-    toggleVideo(newVideoState);
+  const newVideoState = !isVideoOn;
+  toggleVideo(newVideoState);
+  if (newVideoState) {
+    // ✅ Turning ON: send request to other user — they must accept
     getSocket()?.emit('videoToggle', {
       to: otherUserId,
-      isVideoOn: newVideoState,
+      isVideoOn: true,
     });
-  };
+  } else {
+    // ✅ Turning OFF: just turn off locally, no alert needed on other side
+    getSocket()?.emit('videoToggleOff', {
+      to: otherUserId,
+    });
+  }
+};
 
   const processIceQueue = () => {
     while (iceCandidatesQueue.current.length > 0) {
@@ -140,74 +147,26 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     };
   };
 
+  // ✅ Only reset state on FIRST mount (new call), not on remount from minimize
   useEffect(() => {
-    setIsMuted(false);
-    setIsVideoOn(false);
-    setIsFrontCamera(true);
-    setIsRemoteFrontCamera(false);
+    if (!callInitialized.current) {
+      setIsMuted(false);
+      setIsVideoOn(false);
+      setIsFrontCamera(true);
+      setIsRemoteFrontCamera(false);
+    }
   }, []);
 
   useEffect(() => {
     const socket = getSocket();
     if (!socket || !callData) return;
 
-    const startCall = async () => {
-      const allowed = await requestCallPermissions();
-      if (!allowed) return;
-
-      InCallManager.start({media: 'audio', auto: true, ringback: ''});
-      InCallManager.setKeepScreenOn(true);
-      InCallManager.setSpeakerphoneOn(false);
-      InCallManager.setForceSpeakerphoneOn(false);
-
-      try {
-        const stream = await mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: {facingMode: 'user', width: 640, height: 480},
-        });
-
-        stream.getAudioTracks().forEach(t => (t.enabled = true));
-        stream.getVideoTracks().forEach(t => (t.enabled = false));
-
-        setLocalStream(stream);
-        setupPeerConnection(stream);
-
-        if (isCaller) {
-          const offer = await pc.current.createOffer();
-          await pc.current.setLocalDescription(offer);
-          const auth = getAuth();
-          socket.emit('call', {
-            calleeId: otherUserId,
-            callerId: myId,
-            callerName: callData.callerName,
-            callerPic: auth.currentUser?.photoURL || '', // ✅ always fresh from Auth
-            receiverId: otherUserId,
-            receiverName: callData.receiverName,
-            receiverPic: callData.receiverPic,
-            rtcMessage: offer,
-          });
-        } else {
-          if (callData.rtcMessage) {
-            await pc.current.setRemoteDescription(
-              new RTCSessionDescription(callData.rtcMessage),
-            );
-            processIceQueue();
-            const answer = await pc.current.createAnswer();
-            await pc.current.setLocalDescription(answer);
-            socket.emit('answerCall', {
-              callerId: otherUserId,
-              rtcMessage: answer,
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Call setup error:', e);
-      }
-    };
+    // ✅ Re-attach socket listeners every time screen mounts (needed after minimize/restore)
+    socket.off('callAnswered');
+    socket.off('ICEcandidate');
+    socket.off('cameraSwitch');
+    socket.off('videoToggle');
+    socket.off('videoToggleResponse');
 
     socket.on('callAnswered', async data => {
       if (pc.current && !pc.current.remoteDescription) {
@@ -241,47 +200,117 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       setIsRemoteFrontCamera(data.isFrontCamera);
     });
 
-    socket.on('videoToggle', data => {
-      if (data.isVideoOn && !isVideoOn) {
-        Alert.alert('Video Call Request', `${aliasName} wants to start video`, [
-          {
-            text: 'Decline',
-            style: 'cancel',
-            onPress: () => {
-              getSocket()?.emit('videoToggleResponse', {
-                to: otherUserId,
-                accepted: false,
-              });
-            },
-          },
-          {
-            text: 'Accept',
-            onPress: () => {
-              toggleVideo(true);
-              getSocket()?.emit('videoToggleResponse', {
-                to: otherUserId,
-                accepted: true,
-              });
-            },
-          },
-        ]);
-      } else {
-        toggleVideo(data.isVideoOn);
-      }
-    });
+socket.on('videoToggle', data => {
+  if (data.isVideoOn) {
+    // Other user wants to START video — show alert
+    Alert.alert('Video Call Request', `${aliasName} wants to start video`, [
+      {
+        text: 'Decline',
+        style: 'cancel',
+        onPress: () => {
+          getSocket()?.emit('videoToggleResponse', {
+            to: otherUserId,
+            accepted: false,
+          });
+        },
+      },
+      {
+        text: 'Accept',
+        onPress: () => {
+          toggleVideo(true);
+          getSocket()?.emit('videoToggleResponse', {
+            to: otherUserId,
+            accepted: true,
+          });
+        },
+      },
+    ]);
+  }
+  // ✅ If other user turned OFF their video — do NOT mirror it, their screen handles itself
+  // Only respond to turn-ON requests via alert
+});
 
-    socket.on('videoToggleResponse', data => {
-      if (data.accepted) {
-        toggleVideo(true);
-      } else {
-        Alert.alert('Video Declined', `${aliasName} declined the video call`);
-        toggleVideo(false);
-      }
-    });
+   socket.on('videoToggleResponse', data => {
+  if (data.accepted) {
+    toggleVideo(true); // ✅ They accepted — turn on OUR video
+  } else {
+    Alert.alert('Video Declined', `${aliasName} declined the video call`);
+    toggleVideo(false); // ✅ They declined — turn off our request
+  }
+});
 
-    socket.on('remoteHangup', () => {
-      leaveCall(false);
-    });
+    // ✅ KEY FIX: Only run startCall ONCE per real call session
+    if (callInitialized.current) {
+      console.log('🔁 AudioCallScreen remounted — skipping re-init');
+      // If remoteStream already exists, mark as connected (timer already running in context)
+      if (remoteStream) setCallConnected(true);
+      return () => {
+        socket.off('callAnswered');
+        socket.off('ICEcandidate');
+        socket.off('cameraSwitch');
+        socket.off('videoToggle');
+        socket.off('videoToggleResponse');
+      };
+    }
+
+    callInitialized.current = true; // ✅ Mark as initialized
+
+    const startCall = async () => {
+      const allowed = await requestCallPermissions();
+      if (!allowed) return;
+
+      InCallManager.start({media: 'audio', auto: true, ringback: ''});
+      InCallManager.setKeepScreenOn(true);
+      InCallManager.setSpeakerphoneOn(false);
+      InCallManager.setForceSpeakerphoneOn(false);
+
+      try {
+        const stream = await mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: {facingMode: 'user', width: 640, height: 480},
+        });
+
+        stream.getAudioTracks().forEach(t => (t.enabled = true));
+        stream.getVideoTracks().forEach(t => (t.enabled = false));
+
+        setLocalStream(stream);
+        setupPeerConnection(stream);
+
+        if (isCaller) {
+          const offer = await pc.current.createOffer();
+          await pc.current.setLocalDescription(offer);
+          socket.emit('call', {
+            calleeId: otherUserId,
+            callerId: myId,
+            callerName: callData.callerName,
+            callerPic: callData.callerPic || '',
+            receiverId: otherUserId,
+            receiverName: callData.receiverName,
+            receiverPic: callData.receiverPic,
+            rtcMessage: offer,
+          });
+        } else {
+          if (callData.rtcMessage) {
+            await pc.current.setRemoteDescription(
+              new RTCSessionDescription(callData.rtcMessage),
+            );
+            processIceQueue();
+            const answer = await pc.current.createAnswer();
+            await pc.current.setLocalDescription(answer);
+            socket.emit('answerCall', {
+              callerId: otherUserId,
+              rtcMessage: answer,
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Call setup error:', e);
+      }
+    };
 
     startCall();
 
@@ -291,7 +320,7 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       socket.off('cameraSwitch');
       socket.off('videoToggle');
       socket.off('videoToggleResponse');
-      socket.off('remoteHangup');
+        socket.off('videoToggleOff'); // ✅ NEW
     };
   }, []);
 
@@ -315,12 +344,13 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     }
   }, [isSpeakerOn]);
 
+  // ✅ Only start timer once — if it's already running (timerRef has value), skip
   useEffect(() => {
-    if (remoteStream) {
-      setCallConnected(true);
-      startCallTimer();
-    }
-  }, [remoteStream]);
+  if (remoteStream) {
+    setCallConnected(true);
+    startCallTimer(); // ✅ Safe now — context guards against double-start
+  }
+}, [remoteStream]);
 
   const formatTime = seconds => {
     const mins = Math.floor(seconds / 60);
@@ -341,49 +371,20 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     });
   };
 
-  const leaveCall = async (shouldEmit = true) => {
+ const leaveCall = async (shouldEmit = true) => {
     if (localEnding) return;
     setLocalEnding(true);
 
-    if (shouldEmit) getSocket()?.emit('endCall', {to: otherUserId});
-
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      setLocalStream(null);
+    // ✅ Emit to other side first
+    if (shouldEmit) {
+      getSocket()?.emit('endCall', {to: otherUserId});
     }
 
-    if (pc.current) {
-      pc.current.close();
-      pc.current = null;
-    }
-
-    setRemoteStream(null);
-    setCallStatus('idle');
-    stopCallTimer();
-    setIsFrontCamera(true);
-    setIsRemoteFrontCamera(false);
     iceCandidatesQueue.current = [];
-    InCallManager.stop();
 
-    try {
-      const ts = serverTimestamp();
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.callerId,
-        friendId: callData.receiverId,
-        type: 'outbound',
-        timestamp: ts,
-      });
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.receiverId,
-        friendId: callData.callerId,
-        type: 'inbound',
-        timestamp: ts,
-      });
-    } catch (e) {
-      console.log('History write error:', e);
-    }
-
-    setActiveCall(null);
+    // ✅ Let App.js cleanupCall handle EVERYTHING including history
+    // Pass callData so history is written exactly once
+    triggerHangup(callData);
   };
 
   const getStatusText = () => {

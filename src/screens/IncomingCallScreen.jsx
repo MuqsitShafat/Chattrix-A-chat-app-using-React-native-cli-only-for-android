@@ -11,7 +11,7 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
 const IncomingCallScreen = ({callData, onAccept, onReject}) => {
   const callerName = callData?.callerName || 'Unknown';
-  const rawPic = callData?.callerPic || null;
+  const rawPic = callData?.callerPic || callData?.profilePic || null;
 
   // ✅ High quality Google/Facebook profile pic
   let photoUrl = rawPic;
@@ -24,9 +24,10 @@ const IncomingCallScreen = ({callData, onAccept, onReject}) => {
   }
 
   const displayImage =
-    photoUrl && photoUrl !== ''
+    photoUrl && typeof photoUrl === 'string' && photoUrl.trim() !== ''
       ? {uri: photoUrl}
       : require('../images/User_profile_icon.jpg');
+      
 
   return (
     <SafeAreaView style={styles.container}>
@@ -79,12 +80,12 @@ const styles = StyleSheet.create({
   nameText: {fontSize: 36, color: 'white', fontWeight: 'bold'},
   centerSection: {alignItems: 'center', justifyContent: 'center'},
   imageCircle: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
+        width: 200,
+    height: 200,
+    borderRadius: 100,
     overflow: 'hidden',
-    borderWidth: 4,
-    borderColor: '#4175DF',
+    borderWidth: 3,
+    borderColor: '#555',
   },
   profileImage: {width: '100%', height: '100%'},
   buttonsRow: {

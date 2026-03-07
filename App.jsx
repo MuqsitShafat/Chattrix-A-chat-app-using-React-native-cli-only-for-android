@@ -13,6 +13,7 @@ import {
   query,
   where,
   getDocs,
+  addDoc
 } from '@react-native-firebase/firestore';
 import {
   NavigationContainer,
@@ -21,6 +22,7 @@ import {
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createDrawerNavigator} from '@react-navigation/drawer';
 import Icon from 'react-native-vector-icons/Ionicons';
+import InCallManager from 'react-native-incall-manager';
 
 import Call_screen from './src/screens/Call_screen';
 import Home_Chat_navigator from './src/Navigation/Home_Chat_navigator';
@@ -143,16 +145,87 @@ const AppContent = () => {
     setIsFrontCamera,
     setIsRemoteFrontCamera,
     stopCallTimer,
+    localStream,
+    setLocalStream,
+    remoteStream,    // ✅ NEW
+    setRemoteStream,
+    pc,
+    callInitialized, 
+    hangupCallRef,   // ✅ NEW
   } = useContext(AuthContext);
 
   const db = getFirestore();
   const navigationRef = useRef();
   const [isMinimized, setIsMinimized] = useState(false);
-
-  // ✅ Track if a remoteHangup arrived WHILE we were still fetching alias
   const pendingCancelRef = useRef(false);
-
   const isIncoming = !!activeCall?.isIncoming;
+
+  // ✅ KEY FIX: Use a ref to hold latest cleanup values so the socket listener
+  // never captures a stale closure. Every render updates this ref.
+  const cleanupRef = useRef({});
+  cleanupRef.current = {
+    localStream,
+    setLocalStream,
+    remoteStream,    // ✅ NEW: needed to check if call was connected
+    setRemoteStream,
+    stopCallTimer,
+    setIsFrontCamera,
+    setIsRemoteFrontCamera,
+    setActiveCall,
+    setIsMinimized,
+    setCallStatus,
+    pc,
+    callInitialized, 
+       activeCall,      // ✅ ADD THIS — keeps activeCall fresh for remoteHangup
+  };
+
+const cleanupCall = async (callData = null) => {
+    const c = cleanupRef.current;
+
+    // ✅ SINGLE SOURCE OF TRUTH for call history
+    // Writes exactly ONE history entry per call, from one place only
+    if (callData?.callerId && callData?.receiverId) {
+      try {
+        const wasConnected = !!c.remoteStream;
+        const ts = serverTimestamp();
+        await addDoc(collection(db, 'call_history'), {
+          userId: callData.callerId,
+          friendId: callData.receiverId,
+          type: wasConnected ? 'outbound' : 'missed_outbound',
+          timestamp: ts,
+        });
+        await addDoc(collection(db, 'call_history'), {
+          userId: callData.receiverId,
+          friendId: callData.callerId,
+          type: wasConnected ? 'inbound' : 'missed_inbound',
+          timestamp: ts,
+        });
+      } catch (e) {
+        console.log('History write error:', e);
+      }
+    }
+
+    if (c.localStream) {
+      c.localStream.getTracks().forEach(t => t.stop());
+      c.setLocalStream(null);
+    }
+    if (c.pc?.current) {
+      c.pc.current.close();
+      c.pc.current = null;
+    }
+    c.setRemoteStream(null);
+    c.stopCallTimer();
+    c.setIsFrontCamera(true);
+    c.setIsRemoteFrontCamera(false);
+    InCallManager.stop();
+    c.setActiveCall(null);
+    c.setIsMinimized(false);
+    c.setCallStatus('idle');
+    if (c.callInitialized) c.callInitialized.current = false;
+  };
+  // ✅ Wire up so any component can call cleanupCall via context
+  hangupCallRef.current = cleanupCall;
+
 
   useEffect(() => {
     if (!user) {
@@ -164,8 +237,10 @@ const AppContent = () => {
 
     const socket = connectSocket(user.uid);
 
+    socket.off('newCall');
+    socket.off('remoteHangup');
+
     socket.on('newCall', async data => {
-      // ✅ Reset cancel flag for this new call
       pendingCancelRef.current = false;
 
       setIsMuted(false);
@@ -174,7 +249,6 @@ const AppContent = () => {
       setIsFrontCamera(true);
       setIsRemoteFrontCamera(false);
 
-      // Fetch alias name
       let displayCallerName = data.callerName;
       try {
         const friendsRef = collection(db, 'users', user.uid, 'contacts');
@@ -190,7 +264,6 @@ const AppContent = () => {
         console.log('Alias fetch error:', e);
       }
 
-      // ✅ If caller already hung up while we were fetching alias — ignore
       if (pendingCancelRef.current) {
         console.log('Caller cancelled before screen showed — ignoring');
         pendingCancelRef.current = false;
@@ -210,14 +283,20 @@ const AppContent = () => {
       setCallStatus('incoming');
       setIsMinimized(false);
     });
+    
+// ✅ RESTORED: remoteHangup must be at App level so it works
+    // whether AudioCallScreen is mounted or not (before/after call init)
+   socket.on('remoteHangup', () => {
+      // pendingCancelRef blocks a newCall from showing if it arrives
+      // right after a hangup — only needed when WE were the caller
+      pendingCancelRef.current = false; // ✅ Don't block future incoming calls
+      // ✅ Pass null — the person who hung up already wrote the history
+      // We only clean up our own state here, no history written
+      cleanupCall(null);
+    });
 
-    socket.on('remoteHangup', () => {
-      // ✅ If newCall is still being processed (async alias fetch), mark cancel
-      pendingCancelRef.current = true;
-      stopCallTimer();
-      setActiveCall(null);
-      setIsMinimized(false);
-      setCallStatus('idle');
+    socket.on('videoToggleOff', () => {
+      // no-op at app level, AudioCallScreen handles its own listener
     });
 
     return () => {
@@ -225,9 +304,9 @@ const AppContent = () => {
       if (s) {
         s.off('newCall');
         s.off('remoteHangup');
+        s.off('videoToggleOff');
       }
-    };
-  }, [user]);
+    };  }, [user]);
 
   useEffect(() => {
     const updateStatus = async status => {
@@ -276,9 +355,9 @@ const AppContent = () => {
   };
 
   const handleRejectCall = () => {
+    // Emit to caller so their IncomingCall/AudioCall screen also closes
     getSocket()?.emit('endCall', {to: activeCall?.callerId});
-    setActiveCall(null);
-    setCallStatus('idle');
+    cleanupCall(activeCall); // ✅ Pass activeCall for missed history
   };
 
   const showIncoming = !!(user && activeCall && isIncoming);
@@ -351,6 +430,7 @@ const AppContent = () => {
               callData={activeCall}
               myId={user.uid}
               onPressBar={() => setIsMinimized(false)}
+               onExpand={() => setIsMinimized(false)}  // ✅ NEW: auto-open on video
             />
           )}
         </View>

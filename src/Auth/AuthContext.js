@@ -19,13 +19,14 @@ export const AuthProvider = ({children}) => {
   const [isRemoteFrontCamera, setIsRemoteFrontCamera] = useState(false);
 
   const pc = useRef(null);
+  const callInitialized = useRef(false); // ✅ NEW: prevents re-init on remount
 
   // ✅ Timer lives in context — persists across screen mounts/unmounts
   const timerRef = useRef(null);
 
   const startCallTimer = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setCallDuration(0);
+    // ✅ If timer already running, don't reset it
+    if (timerRef.current) return;
     timerRef.current = setInterval(() => {
       setCallDuration(prev => prev + 1);
     }, 1000);
@@ -72,7 +73,14 @@ export const AuthProvider = ({children}) => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
+  // ✅ This ref is set by App.js so any component can trigger the central hangup
+  const hangupCallRef = useRef(null);
 
+  const triggerHangup = callData => {
+    if (hangupCallRef.current) {
+      hangupCallRef.current(callData);
+    }
+  };
   return (
     <AuthContext.Provider
       value={{
@@ -102,6 +110,9 @@ export const AuthProvider = ({children}) => {
         setIsRemoteFrontCamera,
         startCallTimer,
         stopCallTimer,
+        callInitialized,
+        hangupCallRef, // ✅ App.js sets this to point to cleanupCall
+        triggerHangup, // ✅ Components call this to trigger central hangup
       }}>
       {children}
     </AuthContext.Provider>

@@ -1,3 +1,4 @@
+
 import {
   View,
   Text,
@@ -24,7 +25,6 @@ import {
   writeBatch,
   doc,
   getDoc,
-  serverTimestamp,
 } from '@react-native-firebase/firestore';
 import {AuthContext} from '../Auth/AuthContext';
 import {getSocket} from '../services/socketService';
@@ -36,7 +36,6 @@ const Call_screen = ({navigation}) => {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
 
-  // ✅ Added setActiveCall
   const {activeCall, setActiveCall} = useContext(AuthContext);
 
   const isMounted = useRef(true);
@@ -72,6 +71,7 @@ const Call_screen = ({navigation}) => {
           }
 
           let displayName = 'Unknown';
+          let displayPic = ''; // ✅ FIX: fetch pic
           try {
             const contactRef = doc(
               db,
@@ -87,11 +87,13 @@ const Call_screen = ({navigation}) => {
                 contactSnap.data().aliasName ||
                 contactSnap.data().originalName ||
                 'User';
+              displayPic = contactSnap.data().profilePic || '';
             } else {
               const userRef = doc(db, 'users', callData.friendId);
               const userSnap = await getDoc(userRef);
               if (userSnap.exists()) {
                 displayName = userSnap.data().name || 'User';
+                displayPic = userSnap.data().profilePic || ''; // ✅ fetch from users collection
               }
             }
           } catch (e) {
@@ -102,6 +104,7 @@ const Call_screen = ({navigation}) => {
             ...callData,
             id: documentSnapshot.id,
             name: displayName,
+            pic: displayPic, // ✅ store pic
             time: readableTime,
           };
         });
@@ -123,8 +126,8 @@ const Call_screen = ({navigation}) => {
     };
   }, [user]);
 
-  // ✅ UPDATED: Socket-based with confirmation alert
-  const handleHistoryCall = (friendId, friendName) => {
+  // ✅ FIX: pass friendPic into setActiveCall so caller sees receiver's image
+  const handleHistoryCall = (friendId, friendName, friendPic) => {
     if (!friendId || !user || activeCall) return;
 
     const socket = getSocket();
@@ -144,7 +147,7 @@ const Call_screen = ({navigation}) => {
             callerPic: user.photoURL || '',
             receiverId: friendId,
             receiverName: friendName,
-            receiverPic: '',
+            receiverPic: friendPic || '', // ✅ now correctly set
             isIncoming: false,
           });
         },
@@ -260,8 +263,8 @@ const Call_screen = ({navigation}) => {
           contentContainerStyle={styles.listPadding}
           renderItem={({item}) => {
             const isSelected = selectedItems.includes(item.id);
-            const isOutbound = item.type === 'outbound';
-
+            const isOutbound = item.type === 'outbound' || item.type === 'missed_outbound';
+            const isMissed = item.type === 'missed_outbound' || item.type === 'missed_inbound';
             return (
               <TouchableOpacity
                 onLongPress={() => onLongPressItem(item.id)}
@@ -287,22 +290,40 @@ const Call_screen = ({navigation}) => {
                     <View style={{flexDirection: 'row', alignItems: 'center'}}>
                       <Icon
                         name={
-                          isOutbound ? 'arrow-up-outline' : 'arrow-down-outline'
+                          isMissed
+                            ? 'call-outline'
+                            : isOutbound
+                            ? 'arrow-up-outline'
+                            : 'arrow-down-outline'
                         }
                         size={14}
-                        color={isOutbound ? '#4CD964' : '#FF3B30'}
-                        style={styles.tiltedArrow}
+                        color={
+                          isMissed ? '#FF9500' : isOutbound ? '#4CD964' : '#FF3B30'
+                        }
+                        style={[styles.tiltedArrow,  isMissed && {transform: [{rotate: '360deg'}]},]}
                       />
-                      <Text style={styles.directionText}>
-                        {isOutbound ? 'Outbound' : 'Inbound'}
+                      <Text
+                        style={[
+                          styles.directionText,
+                          isMissed && {color: '#FF9500',},
+                          
+                        ]}>
+                        {isMissed
+                          ? isOutbound
+                            ? 'Missed (you)'
+                            : 'Missed'
+                          : isOutbound
+                          ? 'Outbound'
+                          : 'Inbound'}
                       </Text>
                     </View>
                   </View>
 
                   <View style={styles.iconContainer}>
                     <TouchableOpacity
-                      onPress={() =>
-                        handleHistoryCall(item.friendId, item.name)
+                      onPress={
+                        () =>
+                          handleHistoryCall(item.friendId, item.name, item.pic) // ✅ pass pic
                       }
                       disabled={!!activeCall}
                       style={activeCall && {opacity: 0.6}}>

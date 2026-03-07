@@ -4,16 +4,13 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {
   getFirestore,
-  collection,
-  serverTimestamp,
-  addDoc,
 } from '@react-native-firebase/firestore';
 import {RTCView} from 'react-native-webrtc';
 import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
 import {getSocket} from '../services/socketService';
 
-const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
+const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
   const db = getFirestore();
   const {
     localStream,
@@ -31,6 +28,8 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
     setIsFrontCamera,
     setIsRemoteFrontCamera,
     stopCallTimer, // ✅
+     callInitialized, // ✅ NEW
+       triggerHangup,  // ✅ NEW — central hangup handler
   } = useContext(AuthContext);
 
   const [localEnding, setLocalEnding] = useState(false);
@@ -50,55 +49,36 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar}) => {
 
   const handleToggleVideo = () => {
     const newVideoState = !isVideoOn;
-    toggleVideo(newVideoState);
-    getSocket()?.emit('videoToggle', {
-      to: otherUserId,
-      isVideoOn: newVideoState,
-    });
+
+    if (newVideoState) {
+      // ✅ Turning ON from bar:
+      // 1. Set video on in context (so AudioCallScreen sees it true when it mounts)
+      toggleVideo(true);
+      // 2. Emit request to other user
+      getSocket()?.emit('videoToggle', {
+        to: otherUserId,
+        isVideoOn: true,
+      });
+      // 3. Open the full screen (modal opens with isVideoOn already true)
+      if (onExpand) onExpand();
+    } else {
+      // ✅ Turning OFF from bar: just turn off locally
+      toggleVideo(false);
+      getSocket()?.emit('videoToggleOff', {
+        to: otherUserId,
+      });
+    }
   };
 
-  const handleHangup = async () => {
+   const handleHangup = () => {
     if (localEnding) return;
     setLocalEnding(true);
 
+    // ✅ Emit to other side
     getSocket()?.emit('endCall', {to: otherUserId});
 
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      setLocalStream(null);
-    }
-
-    if (pc.current) {
-      pc.current.close();
-      pc.current = null;
-    }
-
-    setRemoteStream(null);
-    setCallStatus('idle');
-    stopCallTimer(); // ✅ stops and resets global timer
-    setIsFrontCamera(true);
-    setIsRemoteFrontCamera(false);
-    InCallManager.stop();
-
-    try {
-      const ts = serverTimestamp();
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.callerId,
-        friendId: callData.receiverId,
-        type: 'outbound',
-        timestamp: ts,
-      });
-      await addDoc(collection(db, 'call_history'), {
-        userId: callData.receiverId,
-        friendId: callData.callerId,
-        type: 'inbound',
-        timestamp: ts,
-      });
-    } catch (e) {
-      console.log('History write error:', e);
-    }
-
-    setActiveCall(null);
+    // ✅ Central cleanup + history written exactly once
+    triggerHangup(callData);
   };
 
   const aliasName =
