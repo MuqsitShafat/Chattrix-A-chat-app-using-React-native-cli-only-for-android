@@ -13,7 +13,8 @@ import {
   query,
   where,
   getDocs,
-  addDoc
+  addDoc,
+  setDoc,
 } from '@react-native-firebase/firestore';
 import {
   NavigationContainer,
@@ -38,6 +39,7 @@ import {
   disconnectSocket,
   getSocket,
 } from './src/services/socketService';
+import {GOOGLE_WEB_CLIENT_ID} from '@env'; // 👈 ADD THIS at top
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
@@ -147,17 +149,19 @@ const AppContent = () => {
     stopCallTimer,
     localStream,
     setLocalStream,
-    remoteStream,    // ✅ NEW
+    remoteStream, // ✅ NEW
     setRemoteStream,
     pc,
-    callInitialized, 
-    hangupCallRef,   // ✅ NEW
+    callInitialized,
+    hangupCallRef,
+    isHangingUp, // ✅ Global hangup lock
   } = useContext(AuthContext);
 
   const db = getFirestore();
   const navigationRef = useRef();
   const [isMinimized, setIsMinimized] = useState(false);
   const pendingCancelRef = useRef(false);
+  const activeCallTokenRef = useRef(null); // ✅ Invalidates stale newCall after hangup
   const isIncoming = !!activeCall?.isIncoming;
 
   // ✅ KEY FIX: Use a ref to hold latest cleanup values so the socket listener
@@ -166,7 +170,7 @@ const AppContent = () => {
   cleanupRef.current = {
     localStream,
     setLocalStream,
-    remoteStream,    // ✅ NEW: needed to check if call was connected
+    remoteStream, // ✅ NEW: needed to check if call was connected
     setRemoteStream,
     stopCallTimer,
     setIsFrontCamera,
@@ -175,36 +179,41 @@ const AppContent = () => {
     setIsMinimized,
     setCallStatus,
     pc,
-    callInitialized, 
-       activeCall,      // ✅ ADD THIS — keeps activeCall fresh for remoteHangup
+    callInitialized,
+    activeCall, // ✅ ADD THIS — keeps activeCall fresh for remoteHangup
+    isHangingUp, // ✅ Keep ref fresh
   };
 
-const cleanupCall = async (callData = null) => {
+  const cleanupCall = (callData = null) => {
     const c = cleanupRef.current;
 
-    // ✅ SINGLE SOURCE OF TRUTH for call history
-    // Writes exactly ONE history entry per call, from one place only
+    // ✅ Write history in background — never block UI cleanup on Firestore
     if (callData?.callerId && callData?.receiverId) {
-      try {
-        const wasConnected = !!c.remoteStream;
-        const ts = serverTimestamp();
-        await addDoc(collection(db, 'call_history'), {
-          userId: callData.callerId,
-          friendId: callData.receiverId,
-          type: wasConnected ? 'outbound' : 'missed_outbound',
-          timestamp: ts,
-        });
-        await addDoc(collection(db, 'call_history'), {
-          userId: callData.receiverId,
-          friendId: callData.callerId,
-          type: wasConnected ? 'inbound' : 'missed_inbound',
-          timestamp: ts,
-        });
-      } catch (e) {
-        console.log('History write error:', e);
-      }
+      const wasConnected = !!c.remoteStream;
+      const ts = serverTimestamp();
+      const sortedIds = [callData.callerId, callData.receiverId]
+        .sort()
+        .join('_');
+      const bucket = Math.floor(Date.now() / 5000);
+      const dedupId = `${sortedIds}_${bucket}`;
+
+      // Fire and forget — UI doesn't wait for these
+      setDoc(doc(db, 'call_history', `${dedupId}_caller`), {
+        userId: callData.callerId,
+        friendId: callData.receiverId,
+        type: wasConnected ? 'outbound' : 'missed_outbound',
+        timestamp: ts,
+      }).catch(e => console.log('History write error:', e));
+
+      setDoc(doc(db, 'call_history', `${dedupId}_receiver`), {
+        userId: callData.receiverId,
+        friendId: callData.callerId,
+        type: wasConnected ? 'inbound' : 'missed_inbound',
+        timestamp: ts,
+      }).catch(e => console.log('History write error:', e));
     }
 
+    // ✅ UI cleanup runs IMMEDIATELY — no await anywhere
     if (c.localStream) {
       c.localStream.getTracks().forEach(t => t.stop());
       c.setLocalStream(null);
@@ -222,10 +231,22 @@ const cleanupCall = async (callData = null) => {
     c.setIsMinimized(false);
     c.setCallStatus('idle');
     if (c.callInitialized) c.callInitialized.current = false;
+    isHangingUp.current = false;
   };
   // ✅ Wire up so any component can call cleanupCall via context
   hangupCallRef.current = cleanupCall;
 
+  // ✅ Override triggerHangup at App level with the lock guard
+  // This replaces the plain context version with a protected one
+  const safeHangup = callData => {
+    if (isHangingUp.current) {
+      console.log('🔒 Hangup already in progress — ignoring duplicate press');
+      return;
+    }
+    isHangingUp.current = true; // ✅ Lock immediately on first press
+    cleanupCall(callData);
+  };
+  hangupCallRef.current = safeHangup; // ✅ All triggerHangup calls now go through this
 
   useEffect(() => {
     if (!user) {
@@ -241,7 +262,10 @@ const cleanupCall = async (callData = null) => {
     socket.off('remoteHangup');
 
     socket.on('newCall', async data => {
+      // ✅ Each call gets a unique token — if a hangup arrives mid-fetch, token changes
+      const callToken = Date.now();
       pendingCancelRef.current = false;
+      activeCallTokenRef.current = callToken;
 
       setIsMuted(false);
       setIsVideoOn(false);
@@ -264,8 +288,12 @@ const cleanupCall = async (callData = null) => {
         console.log('Alias fetch error:', e);
       }
 
-      if (pendingCancelRef.current) {
-        console.log('Caller cancelled before screen showed — ignoring');
+      // ✅ Double check — if remoteHangup arrived during alias fetch, token will be cleared
+      if (
+        pendingCancelRef.current ||
+        activeCallTokenRef.current !== callToken
+      ) {
+        console.log('Call cancelled during setup — ignoring');
         pendingCancelRef.current = false;
         return;
       }
@@ -283,15 +311,16 @@ const cleanupCall = async (callData = null) => {
       setCallStatus('incoming');
       setIsMinimized(false);
     });
-    
-// ✅ RESTORED: remoteHangup must be at App level so it works
+
+    // ✅ RESTORED: remoteHangup must be at App level so it works
     // whether AudioCallScreen is mounted or not (before/after call init)
-   socket.on('remoteHangup', () => {
+    socket.on('remoteHangup', () => {
       // pendingCancelRef blocks a newCall from showing if it arrives
       // right after a hangup — only needed when WE were the caller
       pendingCancelRef.current = false; // ✅ Don't block future incoming calls
       // ✅ Pass null — the person who hung up already wrote the history
       // We only clean up our own state here, no history written
+      activeCallTokenRef.current = null; // ✅ Invalidate any in-flight newCall fetch
       cleanupCall(null);
     });
 
@@ -306,7 +335,8 @@ const cleanupCall = async (callData = null) => {
         s.off('remoteHangup');
         s.off('videoToggleOff');
       }
-    };  }, [user]);
+    };
+  }, [user]);
 
   useEffect(() => {
     const updateStatus = async status => {
@@ -340,10 +370,10 @@ const cleanupCall = async (callData = null) => {
 
   useEffect(() => {
     GoogleSignin.configure({
-      webClientId:
-        '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
+      webClientId: GOOGLE_WEB_CLIENT_ID, // 👈 was the hardcoded string
       offlineAccess: true,
     });
+
     BootSplash.hide({fade: true});
   }, []);
 
@@ -355,9 +385,9 @@ const cleanupCall = async (callData = null) => {
   };
 
   const handleRejectCall = () => {
-    // Emit to caller so their IncomingCall/AudioCall screen also closes
+    if (isHangingUp.current) return; // ✅ Guard against double-tap on IncomingCallScreen
     getSocket()?.emit('endCall', {to: activeCall?.callerId});
-    cleanupCall(activeCall); // ✅ Pass activeCall for missed history
+    safeHangup(activeCall); // ✅ Use safeHangup directly since we're in App.js
   };
 
   const showIncoming = !!(user && activeCall && isIncoming);
@@ -430,7 +460,7 @@ const cleanupCall = async (callData = null) => {
               callData={activeCall}
               myId={user.uid}
               onPressBar={() => setIsMinimized(false)}
-               onExpand={() => setIsMinimized(false)}  // ✅ NEW: auto-open on video
+              onExpand={() => setIsMinimized(false)}
             />
           )}
         </View>

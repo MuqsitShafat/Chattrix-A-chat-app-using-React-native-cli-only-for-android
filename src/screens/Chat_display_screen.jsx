@@ -121,9 +121,9 @@ const Chat_display_screen = ({navigation, route}) => {
   // ✅ UPDATED: Socket-based call initiation — no Firebase calls doc needed
   const handleAudioCall = () => {
     if (!friendId || !user || activeCall) return;
-    console.log('🔍 user.photoURL:', user.photoURL);  // ADD THIS
-    console.log('🔍 user:', JSON.stringify(user));     // ADD THIS
-     console.log('👤 user object:', user?.uid, user?.photoURL); // ADD THIS
+   console.log('🔍 user.photoURL:', user.photoURL);
+    console.log('🔍 user:', { uid: user?.uid, email: user?.email, displayName: user?.displayName, photoURL: user?.photoURL });
+    console.log('👤 user object:', user?.uid, user?.photoURL);
     const socket = getSocket();
     if (!socket) {
       Alert.alert('Error', 'Not connected to server');

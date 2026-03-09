@@ -1,5 +1,6 @@
 import {View, Text, StyleSheet, Image, TouchableOpacity} from 'react-native';
 import React, {useEffect} from 'react';
+import { GOOGLE_WEB_CLIENT_ID } from '@env'; // 👈 ADD THIS at top
 
 // ✅ Added Firestore imports
 import { getFirestore, doc, setDoc, getDoc } from '@react-native-firebase/firestore';
@@ -94,9 +95,11 @@ async function onFacebookButtonPress() {
 
 const Signin = ({navigation}) => {
   useEffect(() => {
-    GoogleSignin.configure({
-      webClientId: '752916193237-13c4bjjoiqhapapren23qh8fkhg45mns.apps.googleusercontent.com',
-    });
+  GoogleSignin.configure({
+  webClientId: GOOGLE_WEB_CLIENT_ID, // 👈 was the hardcoded string
+});
+
+
   }, []);
 
   return (

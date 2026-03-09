@@ -1,6 +1,5 @@
 import SocketIOClient from 'socket.io-client';
-
-const SOCKET_URL = 'https://democratic-mickie-muqsit-webrtc-c7691e1f.koyeb.app';
+import { SOCKET_URL } from '@env'; // 👈 ADD THIS
 
 let socket = null;
 

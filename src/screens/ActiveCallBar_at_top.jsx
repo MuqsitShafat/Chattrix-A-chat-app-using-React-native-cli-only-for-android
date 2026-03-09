@@ -1,10 +1,8 @@
 import React, {useState, useContext} from 'react';
-import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
+import {View, Text, StyleSheet, TouchableOpacity, Alert} from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {
-  getFirestore,
-} from '@react-native-firebase/firestore';
+import {getFirestore} from '@react-native-firebase/firestore';
 import {RTCView} from 'react-native-webrtc';
 import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
@@ -28,11 +26,10 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
     setIsFrontCamera,
     setIsRemoteFrontCamera,
     stopCallTimer, // ✅
-     callInitialized, // ✅ NEW
-       triggerHangup,  // ✅ NEW — central hangup handler
+    callInitialized, // ✅ NEW
+    triggerHangup, // ✅ NEW — central hangup handler
+    isHangingUp, // ✅ Global hangup lock
   } = useContext(AuthContext);
-
-  const [localEnding, setLocalEnding] = useState(false);
 
   const otherUserId =
     callData?.callerId === myId ? callData?.receiverId : callData?.callerId;
@@ -47,38 +44,22 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
 
   const handleToggleMute = () => toggleMute(!isMuted);
 
-  const handleToggleVideo = () => {
-    const newVideoState = !isVideoOn;
-
-    if (newVideoState) {
-      // ✅ Turning ON from bar:
-      // 1. Set video on in context (so AudioCallScreen sees it true when it mounts)
-      toggleVideo(true);
-      // 2. Emit request to other user
-      getSocket()?.emit('videoToggle', {
-        to: otherUserId,
-        isVideoOn: true,
-      });
-      // 3. Open the full screen (modal opens with isVideoOn already true)
-      if (onExpand) onExpand();
-    } else {
-      // ✅ Turning OFF from bar: just turn off locally
-      toggleVideo(false);
-      getSocket()?.emit('videoToggleOff', {
-        to: otherUserId,
-      });
-    }
+const handleToggleVideo = () => {
+    if (onExpand) onExpand(false); // ✅ just open screen, no flag needed
+    setTimeout(() => {
+      Alert.alert(
+        'Start Video',
+        'Press the video icon below to start your video.',
+        [{text: 'Got it'}],
+      );
+    }, 400); // ✅ wait for modal animation to finish then show alert
   };
 
-   const handleHangup = () => {
-    if (localEnding) return;
-    setLocalEnding(true);
+  const handleHangup = () => {
+    if (isHangingUp.current) return; // ✅ Global lock check
 
-    // ✅ Emit to other side
     getSocket()?.emit('endCall', {to: otherUserId});
-
-    // ✅ Central cleanup + history written exactly once
-    triggerHangup(callData);
+    triggerHangup(callData); // ✅ safeHangup sets lock before cleanup
   };
 
   const aliasName =
@@ -88,8 +69,8 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={onPressBar}
-      disabled={localEnding}
-      style={[styles.floatingBar, localEnding && {opacity: 0.8}]}>
+      disabled={isHangingUp.current}
+      style={[styles.floatingBar, isHangingUp.current && {opacity: 0.8}]}>
       {remoteStream && (
         <RTCView
           streamURL={remoteStream.toURL()}
@@ -99,7 +80,7 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
 
       <TouchableOpacity
         onPress={handleToggleMute}
-        disabled={localEnding}
+        disabled={isHangingUp.current}
         style={styles.sideBtn}>
         <Ionicons
           name={isMuted ? 'mic-off' : 'mic-outline'}
@@ -108,9 +89,9 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
         />
       </TouchableOpacity>
 
-      <TouchableOpacity
+     <TouchableOpacity
         onPress={handleToggleVideo}
-        disabled={localEnding}
+        disabled={isHangingUp.current}
         style={styles.sideBtn}>
         <Ionicons
           name={isVideoOn ? 'videocam' : 'videocam-outline'}
@@ -119,16 +100,16 @@ const ActiveCallBar_at_top = ({callData, myId, onPressBar, onExpand}) => {
         />
       </TouchableOpacity>
 
-      <Text style={styles.aliasText}>
-        {localEnding
-          ? 'Ending...'
+    <Text style={styles.aliasText}>
+        {isHangingUp.current
+          ? 'Goodbye...'
           : `${aliasName} (${formatTime(callDuration)})`}
       </Text>
 
       <TouchableOpacity
         onPress={handleHangup}
-        disabled={localEnding}
-        style={[styles.sideBtn, styles.redBtn, localEnding && {opacity: 0.5}]}>
+        disabled={isHangingUp.current}
+        style={[styles.sideBtn, styles.redBtn, isHangingUp.current && {opacity: 0.5}]}>
         <MaterialIcons name="call-end" size={24} color="white" />
       </TouchableOpacity>
     </TouchableOpacity>

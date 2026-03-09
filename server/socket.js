@@ -54,17 +54,13 @@ module.exports.initIO = httpServer => {
       });
     });
 
-    socket.on('videoToggle', data => {
-      socket.to(data.to).emit('videoToggle', {
+       socket.on('videoStateChanged', data => {
+      // ✅ Just forward — no logic needed, each user controls their own video
+      socket.to(data.to).emit('videoStateChanged', {
         isVideoOn: data.isVideoOn,
       });
     });
 
-    socket.on('videoToggleResponse', data => {
-      socket.to(data.to).emit('videoToggleResponse', {
-        accepted: data.accepted,
-      });
-    });
   });
 };
 

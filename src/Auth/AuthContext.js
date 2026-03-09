@@ -20,7 +20,7 @@ export const AuthProvider = ({children}) => {
 
   const pc = useRef(null);
   const callInitialized = useRef(false); // ✅ NEW: prevents re-init on remount
-
+const isHangingUp = useRef(false); // ✅ Global hangup lock — shared across ALL screens
   // ✅ Timer lives in context — persists across screen mounts/unmounts
   const timerRef = useRef(null);
 
@@ -113,6 +113,7 @@ export const AuthProvider = ({children}) => {
         callInitialized,
         hangupCallRef, // ✅ App.js sets this to point to cleanupCall
         triggerHangup, // ✅ Components call this to trigger central hangup
+                isHangingUp, // ✅ Global lock ref
       }}>
       {children}
     </AuthContext.Provider>

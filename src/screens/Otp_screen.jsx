@@ -22,6 +22,7 @@ import {
   where,
   getDocs,
 } from '@react-native-firebase/firestore';
+import { ABSTRACT_PHONE_API_KEY } from '@env'; // 👈 ADD THIS at top
 
 const Otp_screen = ({navigation, route}) => {
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -98,9 +99,10 @@ const Otp_screen = ({navigation, route}) => {
       }
 
       // ✅ 2. Call AbstractAPI to check phone validity
-      const response = await fetch(
-        `https://phoneintelligence.abstractapi.com/v1/?api_key=82d68d739cbb4daf9e84faf473bda996&phone=${formatted}`,
-      );
+   const response = await fetch(
+  `https://phoneintelligence.abstractapi.com/v1/?api_key=${ABSTRACT_PHONE_API_KEY}&phone=${formatted}`,
+);
+
 
       const data = await response.json();
       console.log('📞 Validation result:', data);

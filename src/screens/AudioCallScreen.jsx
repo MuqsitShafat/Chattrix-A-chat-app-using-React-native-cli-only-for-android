@@ -10,9 +10,7 @@ import {
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {
-  getFirestore,
-} from '@react-native-firebase/firestore';
+import {getFirestore} from '@react-native-firebase/firestore';
 import {requestCallPermissions} from '../components/permissions';
 import {
   mediaDevices,
@@ -25,7 +23,7 @@ import {AuthContext} from '../Auth/AuthContext';
 import InCallManager from 'react-native-incall-manager';
 import {getSocket} from '../services/socketService';
 
-const AudioCallScreen = ({route, myId, onMinimize}) => {
+const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
   const db = getFirestore();
   const {
     localStream,
@@ -49,7 +47,8 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     startCallTimer,
     stopCallTimer,
     callInitialized,
-        triggerHangup,  // ✅ NEW
+    triggerHangup, // ✅
+    isHangingUp, // ✅ Global hangup lock
   } = useContext(AuthContext);
 
   const callData = route?.params;
@@ -77,30 +76,23 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       ? {uri: photoUrl}
       : require('../images/User_profile_icon.jpg');
 
-  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
-  const [localEnding, setLocalEnding] = useState(false);
+ const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [callConnected, setCallConnected] = useState(false);
 
   const iceCandidatesQueue = useRef([]);
 
   const handleToggleMute = () => toggleMute(!isMuted);
 
-  const handleToggleVideo = () => {
-  const newVideoState = !isVideoOn;
-  toggleVideo(newVideoState);
-  if (newVideoState) {
-    // ✅ Turning ON: send request to other user — they must accept
-    getSocket()?.emit('videoToggle', {
+ const handleToggleVideo = () => {
+    const newVideoState = !isVideoOn;
+    toggleVideo(newVideoState);
+    // ✅ Just notify other side their friend's video state changed
+    // Other side uses this ONLY to show/hide remote video — no alert, no accept/decline
+    getSocket()?.emit('videoStateChanged', {
       to: otherUserId,
-      isVideoOn: true,
+      isVideoOn: newVideoState,
     });
-  } else {
-    // ✅ Turning OFF: just turn off locally, no alert needed on other side
-    getSocket()?.emit('videoToggleOff', {
-      to: otherUserId,
-    });
-  }
-};
+  };
 
   const processIceQueue = () => {
     while (iceCandidatesQueue.current.length > 0) {
@@ -162,11 +154,10 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
     if (!socket || !callData) return;
 
     // ✅ Re-attach socket listeners every time screen mounts (needed after minimize/restore)
-    socket.off('callAnswered');
+  socket.off('callAnswered');
     socket.off('ICEcandidate');
     socket.off('cameraSwitch');
-    socket.off('videoToggle');
-    socket.off('videoToggleResponse');
+    socket.off('videoStateChanged');  
 
     socket.on('callAnswered', async data => {
       if (pc.current && !pc.current.remoteDescription) {
@@ -200,45 +191,54 @@ const AudioCallScreen = ({route, myId, onMinimize}) => {
       setIsRemoteFrontCamera(data.isFrontCamera);
     });
 
-socket.on('videoToggle', data => {
-  if (data.isVideoOn) {
-    // Other user wants to START video — show alert
-    Alert.alert('Video Call Request', `${aliasName} wants to start video`, [
-      {
-        text: 'Decline',
-        style: 'cancel',
-        onPress: () => {
-          getSocket()?.emit('videoToggleResponse', {
-            to: otherUserId,
-            accepted: false,
-          });
-        },
-      },
-      {
-        text: 'Accept',
-        onPress: () => {
-          toggleVideo(true);
-          getSocket()?.emit('videoToggleResponse', {
-            to: otherUserId,
-            accepted: true,
-          });
-        },
-      },
-    ]);
-  }
-  // ✅ If other user turned OFF their video — do NOT mirror it, their screen handles itself
-  // Only respond to turn-ON requests via alert
-});
+    // socket.on('videoToggle', data => {
+    //   if (data.isVideoOn) {
+    //     // Other user wants to START video — show alert
+    //     Alert.alert('Video Call Request', `${aliasName} wants to start video`, [
+    //       {
+    //         text: 'Decline',
+    //         style: 'cancel',
+    //         onPress: () => {
+    //           getSocket()?.emit('videoToggleResponse', {
+    //             to: otherUserId,
+    //             accepted: false,
+    //           });
+    //         },
+    //       },
+    //       {
+    //         text: 'Accept',
+    //         onPress: () => {
+    //           toggleVideo(true);
+    //           getSocket()?.emit('videoToggleResponse', {
+    //             to: otherUserId,
+    //             accepted: true,
+    //           });
+    //         },
+    //       },
+    //     ]);
+    //   }
+    //   // ✅ If other user turned OFF their video — do NOT mirror it, their screen handles itself
+    //   // Only respond to turn-ON requests via alert
+    // });
 
-   socket.on('videoToggleResponse', data => {
-  if (data.accepted) {
-    toggleVideo(true); // ✅ They accepted — turn on OUR video
-  } else {
-    Alert.alert('Video Declined', `${aliasName} declined the video call`);
-    toggleVideo(false); // ✅ They declined — turn off our request
-  }
-});
+    // socket.on('videoToggleResponse', data => {
+    //   if (data.accepted) {
+    //     toggleVideo(true); // ✅ They accepted — turn on OUR video
+    //   } else {
+    //     Alert.alert('Video Declined', `${aliasName} declined the video call`);
+    //     toggleVideo(false); // ✅ They declined — turn off our request
+    //   }
+    // });
 
+
+    //!videostatechanged is the new single event for both ON and OFF — no accept/decline, just notify and update UI
+    socket.on('videoStateChanged', data => {
+      // ✅ Other person toggled their video — just track their state
+      // Their RTCView shows/hides based on remoteStream which updates automatically
+      // We only need to know if remote is sending video to show/hide their feed
+      setIsRemoteFrontCamera(prev => prev); // trigger re-render if needed
+      // No alert, no accept — their video just appears or disappears naturally
+    });
     // ✅ KEY FIX: Only run startCall ONCE per real call session
     if (callInitialized.current) {
       console.log('🔁 AudioCallScreen remounted — skipping re-init');
@@ -282,7 +282,9 @@ socket.on('videoToggle', data => {
 
         if (isCaller) {
           const offer = await pc.current.createOffer();
+          if (!pc.current) return; // ✅ Aborted during createOffer
           await pc.current.setLocalDescription(offer);
+          if (!pc.current) return; // ✅ Aborted during setLocalDescription
           socket.emit('call', {
             calleeId: otherUserId,
             callerId: myId,
@@ -293,14 +295,17 @@ socket.on('videoToggle', data => {
             receiverPic: callData.receiverPic,
             rtcMessage: offer,
           });
-        } else {
+} else {
           if (callData.rtcMessage) {
             await pc.current.setRemoteDescription(
               new RTCSessionDescription(callData.rtcMessage),
             );
+            if (!pc.current) return; // ✅ Aborted during setRemoteDescription
             processIceQueue();
             const answer = await pc.current.createAnswer();
+            if (!pc.current) return; // ✅ Aborted during createAnswer
             await pc.current.setLocalDescription(answer);
+            if (!pc.current) return; // ✅ Aborted during setLocalDescription
             socket.emit('answerCall', {
               callerId: otherUserId,
               rtcMessage: answer,
@@ -313,14 +318,11 @@ socket.on('videoToggle', data => {
     };
 
     startCall();
-
-    return () => {
+return () => {
       socket.off('callAnswered');
       socket.off('ICEcandidate');
       socket.off('cameraSwitch');
-      socket.off('videoToggle');
-      socket.off('videoToggleResponse');
-        socket.off('videoToggleOff'); // ✅ NEW
+      socket.off('videoStateChanged');
     };
   }, []);
 
@@ -346,11 +348,11 @@ socket.on('videoToggle', data => {
 
   // ✅ Only start timer once — if it's already running (timerRef has value), skip
   useEffect(() => {
-  if (remoteStream) {
-    setCallConnected(true);
-    startCallTimer(); // ✅ Safe now — context guards against double-start
-  }
-}, [remoteStream]);
+    if (remoteStream) {
+      setCallConnected(true);
+      startCallTimer(); // ✅ Safe now — context guards against double-start
+    }
+  }, [remoteStream]);
 
   const formatTime = seconds => {
     const mins = Math.floor(seconds / 60);
@@ -371,24 +373,19 @@ socket.on('videoToggle', data => {
     });
   };
 
- const leaveCall = async (shouldEmit = true) => {
-    if (localEnding) return;
-    setLocalEnding(true);
+  const leaveCall = (shouldEmit = true) => {
+    if (isHangingUp.current) return; // ✅ Global lock — reject duplicate presses
 
-    // ✅ Emit to other side first
     if (shouldEmit) {
       getSocket()?.emit('endCall', {to: otherUserId});
     }
 
     iceCandidatesQueue.current = [];
-
-    // ✅ Let App.js cleanupCall handle EVERYTHING including history
-    // Pass callData so history is written exactly once
-    triggerHangup(callData);
+    triggerHangup(callData); // ✅ safeHangup sets the lock before cleanupCall runs
   };
 
   const getStatusText = () => {
-    if (localEnding) return 'Ending...';
+    if (isHangingUp.current) return 'Goodbye...';
     if (remoteStream) return formatTime(callDuration);
     if (isCaller) return callConnected ? 'Ringing...' : 'Calling...';
     return 'Connecting...';
@@ -429,8 +426,12 @@ socket.on('videoToggle', data => {
       {isVideoOn && (
         <SafeAreaView style={styles.videoHangupContainer}>
           <TouchableOpacity
-            style={styles.videoHangupBtn}
-            onPress={() => leaveCall(true)}>
+            style={[
+              styles.videoHangupBtn,
+              isHangingUp.current && {opacity: 0.5},
+            ]}
+            onPress={() => leaveCall(true)}
+            disabled={isHangingUp.current}>
             <MaterialIcons name="call-end" size={28} color="white" />
           </TouchableOpacity>
         </SafeAreaView>
@@ -488,14 +489,18 @@ socket.on('videoToggle', data => {
         />
         {!isVideoOn && (
           <TouchableOpacity
-            style={styles.iconBtnContainer}
+            style={[
+              styles.iconBtnContainer,
+              isHangingUp.current && {opacity: 0.5},
+            ]}
             onPress={() => leaveCall(true)}
+            disabled={isHangingUp.current} // ✅ Globally disabled after first press
             activeOpacity={0.7}>
             <View style={styles.hangupBtn}>
               <MaterialIcons name="call-end" size={30} color="white" />
             </View>
             <Text style={styles.btnLabel}>
-              {localEnding ? 'Ending' : 'End'}
+              {isHangingUp.current ? 'Goodbye' : 'End'}
             </Text>
           </TouchableOpacity>
         )}
