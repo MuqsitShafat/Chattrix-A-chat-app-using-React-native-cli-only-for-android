@@ -80,12 +80,15 @@ android {
 
     namespace "com.chattrix"
     defaultConfig {
-        applicationId "com.chattrix"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
-    }
+    applicationId "com.chattrix"
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+    versionCode 1
+    versionName "1.0"
+    resValue "string", "facebook_app_id", FACEBOOK_APP_ID
+    resValue "string", "facebook_client_token", FACEBOOK_CLIENT_TOKEN
+    resValue "string", "fb_login_protocol_scheme", "fb${FACEBOOK_APP_ID}"
+}
     signingConfigs {
         debug {
             storeFile file('debug.keystore')

@@ -1,6 +1,3 @@
 <resources>
     <string name="app_name">chat</string>
-     <string name="facebook_app_id">1965468180910591</string>
-     <string name="fb_login_protocol_scheme">fb1965468180910591</string>
-     <string name="facebook_client_token">572c389c85f30681dd96157a77d78437</string>
 </resources>

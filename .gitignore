@@ -35,6 +35,9 @@ local.properties
 # Firebase
 android/app/google-services.json
 
+# Gradle secrets
+android/gradle.properties
+
 # IntelliJ
 .idea
 

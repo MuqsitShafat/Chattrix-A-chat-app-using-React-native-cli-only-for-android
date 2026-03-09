@@ -35,7 +35,7 @@
         <!-- Facebook Content Provider required by the SDK -->
         <provider
             android:name="com.facebook.FacebookContentProvider"
-            android:authorities="com.facebook.app.FacebookContentProvider1965468180910591"
+            android:authorities="com.facebook.app.FacebookContentProvider${applicationId}"
             android:exported="true" />
 
         <!-- Facebook activity used in some login flows -->
