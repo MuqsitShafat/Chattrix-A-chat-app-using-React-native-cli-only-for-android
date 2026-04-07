@@ -80,6 +80,9 @@ const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
   const [callConnected, setCallConnected] = useState(false);
 
   const iceCandidatesQueue = useRef([]);
+  // ✅ queue for caller's candidates until the callee is ready
+  const localIceCandidatesQueue = useRef([]);
+
 
   const handleToggleMute = () => toggleMute(!isMuted);
 
@@ -110,6 +113,7 @@ const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
       iceServers: [
         {urls: 'stun:stun.l.google.com:19302'},
         {urls: 'stun:stun1.l.google.com:19302'},
+        {urls: 'stun:global.stun.twilio.com:3478'},
         {
           urls: 'turn:openrelay.metered.ca:80',
           username: 'openrelayproject',
@@ -138,14 +142,21 @@ const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
 
     pc.current.onicecandidate = event => {
       if (event.candidate) {
-        getSocket()?.emit('ICEcandidate', {
+        const payload = {
           calleeId: otherUserId,
           rtcMessage: {
             label: event.candidate.sdpMLineIndex,
             id: event.candidate.sdpMid,
             candidate: event.candidate.candidate,
           },
-        });
+        };
+
+        // ✅ Caller must NOT send candidates until callee has answered, or callee misses them
+        if (isCaller && !pc.current.remoteDescription) {
+          localIceCandidatesQueue.current.push(payload);
+        } else {
+          getSocket()?.emit('ICEcandidate', payload);
+        }
       }
     };
 
@@ -181,6 +192,12 @@ const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
         );
         processIceQueue();
         setCallConnected(true);
+
+        // ✅ Now that callee is ready, send all our queued ICE candidates!
+        localIceCandidatesQueue.current.forEach(payload => {
+          getSocket()?.emit('ICEcandidate', payload);
+        });
+        localIceCandidatesQueue.current = [];
       }
     });
 
