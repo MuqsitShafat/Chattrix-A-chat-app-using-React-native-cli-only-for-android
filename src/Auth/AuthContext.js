@@ -23,6 +23,7 @@ export const AuthProvider = ({children}) => {
 const isHangingUp = useRef(false); // ✅ Global hangup lock — shared across ALL screens
   // ✅ Timer lives in context — persists across screen mounts/unmounts
   const timerRef = useRef(null);
+  const activeChatFriendIdRef = useRef(null); // ✅ Tracks currently open chat to block redundant notifications
 
   const startCallTimer = () => {
     // ✅ If timer already running, don't reset it
@@ -113,7 +114,8 @@ const isHangingUp = useRef(false); // ✅ Global hangup lock — shared across A
         callInitialized,
         hangupCallRef, // ✅ App.js sets this to point to cleanupCall
         triggerHangup, // ✅ Components call this to trigger central hangup
-                isHangingUp, // ✅ Global lock ref
+        isHangingUp, // ✅ Global lock ref
+        activeChatFriendIdRef, // ✅ Allows App.jsx to suppress foreground notifications
       }}>
       {children}
     </AuthContext.Provider>

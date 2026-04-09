@@ -40,6 +40,16 @@ import {
   getSocket,
 } from './src/services/socketService';
 import {GOOGLE_WEB_CLIENT_ID} from '@env'; // 👈 ADD THIS at top
+import { 
+  getMessaging, 
+  requestPermission, 
+  getToken, 
+  onMessage, 
+  onNotificationOpenedApp, 
+  getInitialNotification, 
+  AuthorizationStatus 
+} from '@react-native-firebase/messaging';
+import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
@@ -155,6 +165,7 @@ const AppContent = () => {
     callInitialized,
     hangupCallRef,
     isHangingUp, // ✅ Global hangup lock
+    activeChatFriendIdRef, // ✅ Grab the active chat tracker
   } = useContext(AuthContext);
 
   const db = getFirestore();
@@ -216,8 +227,14 @@ const AppContent = () => {
     // ✅ UI cleanup runs IMMEDIATELY — no await anywhere
     if (c.localStream) {
       c.localStream.getTracks().forEach(t => t.stop());
+      if (typeof c.localStream.release === 'function') c.localStream.release();
       c.setLocalStream(null);
     }
+    if (c.remoteStream) {
+      c.remoteStream.getTracks().forEach(t => t.stop());
+      if (typeof c.remoteStream.release === 'function') c.remoteStream.release();
+    }
+    
     if (c.pc?.current) {
       c.pc.current.close();
       c.pc.current = null;
@@ -376,6 +393,142 @@ const AppContent = () => {
 
     BootSplash.hide({fade: true});
   }, []);
+
+  // ✅ Foreground FCM message handler
+  useEffect(() => {
+    if (!user) return;
+
+    const messagingBase = getMessaging();
+
+    const requestUserPermission = async () => {
+      const authStatus = await requestPermission(messagingBase);
+      const enabled =
+        authStatus === AuthorizationStatus.AUTHORIZED ||
+        authStatus === AuthorizationStatus.PROVISIONAL;
+
+      if (enabled) {
+        console.log('Authorization status:', authStatus);
+        const token = await getToken(messagingBase);
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            fcmToken: token,
+          });
+        } catch (e) {
+          console.log("Error saving FCM token:", e);
+        }
+      }
+    };
+
+    requestUserPermission();
+    
+    // Clear notifications when app opens
+    notifee.cancelAllNotifications();
+
+    // ✅ FOREGROUND MESSAGES
+    const unsubscribeForeground = onMessage(messagingBase, async remoteMessage => {
+      // ✅ Mark the message as delivered if we are in the foreground
+      if (remoteMessage.data?.chatId && remoteMessage.data?.msgId) {
+        try {
+          await updateDoc(doc(db, 'chats', remoteMessage.data.chatId, 'messages', remoteMessage.data.msgId), {
+            status: 'delivered'
+          });
+        } catch (e) {
+          console.log('Error marking message as delivered in foreground:', e);
+        }
+      }
+
+      // App is open, do not display push notifications (as per user request: "not even of call").
+      // Call UI is handled separately via Socket.io.
+    });
+
+    // ✅ BACKGROUND / KILLED APP Notification Click Handling (Firebase Native)
+    const unsubscribeOpenedApp = onNotificationOpenedApp(messagingBase, remoteMessage => {
+      notifee.cancelAllNotifications();
+      if (remoteMessage.data?.isCall === 'true') {
+        const data = remoteMessage.data;
+        setTimeout(() => {
+          setActiveCall({
+            callerId: data.callerId,
+            callerName: data.callerName,
+            callerPic: data.callerPic,
+            receiverId: data.receiverId,
+            receiverName: data.receiverName,
+            receiverPic: data.receiverPic,
+            rtcMessage: data.rtcMessage ? JSON.parse(data.rtcMessage) : null,
+            isIncoming: true,
+          });
+          setCallStatus('incoming');
+        }, 1000); // Small delay to let socket establish
+      } else if (remoteMessage.data?.friendId) {
+        setTimeout(() => {
+          navigationRef.current?.navigate('Chat', {
+            friendId: remoteMessage.data.friendId,
+            friendName: remoteMessage.data.friendName || 'User',
+          });
+        }, 800);
+      }
+    });
+
+    notifee.getInitialNotification().then(initialNotification => {
+      if (initialNotification) {
+        notifee.cancelAllNotifications();
+        const data = initialNotification.notification.data;
+        if (data?.isCall === 'true') {
+          setTimeout(() => {
+            setActiveCall({
+              callerId: data.callerId,
+              callerName: data.callerName,
+              callerPic: data.callerPic,
+              receiverId: data.receiverId,
+              receiverName: data.receiverName,
+              receiverPic: data.receiverPic,
+              rtcMessage: data.rtcMessage ? JSON.parse(data.rtcMessage) : null,
+              isIncoming: true,
+            });
+            setCallStatus('incoming');
+          }, 1500); // Allow time for tree to mount
+        } else if (data?.friendId) {
+          setTimeout(() => {
+            navigationRef.current?.navigate('Chat', {
+              friendId: data.friendId,
+              friendName: data.friendName || 'User',
+            });
+          }, 1500);
+        }
+      }
+    });
+
+    // ✅ FOREGROUND BANNER Click Handling (Notifee Native)
+    const unsubscribeNotifee = notifee.onForegroundEvent(({ type, detail }) => {
+      if (type === EventType.PRESS) {
+        if (detail.notification?.data?.isCall === 'true') {
+          const data = detail.notification.data;
+          setActiveCall({
+            callerId: data.callerId,
+            callerName: data.callerName,
+            callerPic: data.callerPic,
+            receiverId: data.receiverId,
+            receiverName: data.receiverName,
+            receiverPic: data.receiverPic,
+            rtcMessage: data.rtcMessage ? JSON.parse(data.rtcMessage) : null,
+            isIncoming: true,
+          });
+          setCallStatus('incoming');
+        } else if (detail.notification?.data?.friendId) {
+          navigationRef.current?.navigate('Chat', {
+            friendId: detail.notification.data.friendId,
+            friendName: detail.notification.data.friendName || 'User',
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeForeground();
+      unsubscribeOpenedApp();
+      unsubscribeNotifee();
+    };
+  }, [user, activeChatFriendIdRef]);
 
   if (loading) return null;
 

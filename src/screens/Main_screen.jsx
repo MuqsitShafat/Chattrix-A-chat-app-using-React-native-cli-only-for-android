@@ -23,6 +23,7 @@ import {
   TextInput,
   Alert,
   BackHandler,
+  SafeAreaView,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import {useTranslation} from 'react-i18next';
@@ -35,6 +36,7 @@ const Main_screen = ({navigation}) => {
   const [isSearching, setIsSearching] = useState(false);
   const [lastMessages, setLastMessages] = useState({});
   const [messageTimestamps, setMessageTimestamps] = useState({});
+  const [unreadCounts, setUnreadCounts] = useState({});
 
   const db = getFirestore();
   const auth = getAuth();
@@ -107,6 +109,17 @@ const Main_screen = ({navigation}) => {
         );
         let displayLastMsg = 'No messages yet. Say Hi! 👋';
         let timestamp = friend.addedAt ? friend.addedAt.toMillis() : 0;
+        let unread = 0;
+
+        allMsgs.forEach(msg => {
+          if (
+            msg.senderId === friend.friendId &&
+            msg.status !== 'read' &&
+            (!msg.deletedBy || !msg.deletedBy.includes(user.uid))
+          ) {
+            unread++;
+          }
+        });
 
         if (latestValidMsg) {
           displayLastMsg = latestValidMsg.isDeleted
@@ -118,6 +131,7 @@ const Main_screen = ({navigation}) => {
         }
         setLastMessages(prev => ({...prev, [friend.friendId]: displayLastMsg}));
         setMessageTimestamps(prev => ({...prev, [friend.friendId]: timestamp}));
+        setUnreadCounts(prev => ({...prev, [friend.friendId]: unread}));
       });
     });
     return () => {
@@ -185,7 +199,7 @@ const Main_screen = ({navigation}) => {
     });
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.topRow}>
         <TouchableOpacity onPress={() => navigation.openDrawer()}>
           <Icon name="menu" size={45} color="red" />
@@ -267,9 +281,16 @@ const Main_screen = ({navigation}) => {
                     {formatTimeAgo(messageTimestamps[item.friendId])}
                   </Text>
                 </View>
-                <Text style={styles.userMessage} numberOfLines={1}>
-                  {lastMessages[item.friendId] || 'Loading...'}
-                </Text>
+                <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 5}}>
+                  <Text style={styles.userMessage} numberOfLines={1}>
+                    {lastMessages[item.friendId] || 'Loading...'}
+                  </Text>
+                  {unreadCounts[item.friendId] > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadText}>{unreadCounts[item.friendId]}</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </TouchableOpacity>
           )}
@@ -284,7 +305,7 @@ const Main_screen = ({navigation}) => {
         />
       </TouchableOpacity>
       <View style={styles.spacing}></View>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -298,7 +319,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 15,
-    marginTop: StatusBar.currentHeight,
+    marginTop: 15, // Fixed padding replacing StatusBar.currentHeight
     zIndex: 1,
   },
   searchInput: {
@@ -332,8 +353,22 @@ const styles = StyleSheet.create({
   profileImage: {width: 50, height: 50, borderRadius: 25},
   chatContent: {marginLeft: 15, flex: 1},
   userName: {fontSize: 24, fontFamily: 'IrishGrover-Regular', color: '#333'},
-  userMessage: {fontSize: 16, color: '#564141', marginTop: 5},
+  userMessage: {fontSize: 16, color: '#564141', flex: 1, paddingRight: 10},
   timeAgoText: {fontSize: 12, color: '#202b9e72', fontFamily: 'Milonga-Regular'},
+  unreadBadge: {
+    backgroundColor: '#510DC0',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  unreadText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   floatingButton: {
     position: 'absolute',
     bottom: 100,

@@ -326,6 +326,7 @@ const AudioCallScreen = ({route, myId, onMinimize, showVideoAlert}) => {
             receiverName: callData.receiverName,
             receiverPic: callData.receiverPic,
             rtcMessage: offer,
+            token: callData.fcmToken, // ✅ Included FCM token for Incoming Call push
           });
 } else {
           if (callData.rtcMessage) {
@@ -407,9 +408,16 @@ return () => {
 
   const leaveCall = (shouldEmit = true) => {
     if (isHangingUp.current) return; // ✅ Global lock — reject duplicate presses
+    const wasConnected = !!remoteStream;
 
     if (shouldEmit) {
-      getSocket()?.emit('endCall', {to: otherUserId});
+      getSocket()?.emit('endCall', {
+        to: otherUserId,
+        missed: !wasConnected && isCaller, // ✅ Let the backend know if it was a Missed Call
+        token: callData.fcmToken,
+        callerId: myId,
+        callerName: callData.callerName || 'Someone',
+      });
     }
 
     iceCandidatesQueue.current = [];

@@ -6,7 +6,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   TextInput,
-  ScrollView,
+  FlatList,
   StatusBar,
   Alert,
   Animated,
@@ -41,8 +41,9 @@ const Chat_display_screen = ({navigation, route}) => {
   const initialProfilePic = route?.params?.profilePic;
 
   // ✅ Added setActiveCall to destructure
-  const {user, activeCall, setActiveCall} = useContext(AuthContext);
+  const {user, activeCall, setActiveCall, activeChatFriendIdRef} = useContext(AuthContext);
   const [onlineStatus, setOnlineStatus] = useState('Offline');
+  const [friendFcmToken, setFriendFcmToken] = useState(null); // ✅ Added FCM token state
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [selectedMessages, setSelectedMessages] = useState([]);
@@ -54,6 +55,14 @@ const Chat_display_screen = ({navigation, route}) => {
 
   const chatId =
     user?.uid && friendId ? [user.uid, friendId].sort().join('_') : null;
+
+  // ✅ Register this screen globally so App.jsx suppresses foreground pushes for this exact friend
+  useEffect(() => {
+    if (activeChatFriendIdRef && friendId) activeChatFriendIdRef.current = friendId;
+    return () => {
+      if (activeChatFriendIdRef) activeChatFriendIdRef.current = null;
+    };
+  }, [friendId, activeChatFriendIdRef]);
 
   useEffect(() => {
     const backAction = () => {
@@ -94,6 +103,11 @@ const Chat_display_screen = ({navigation, route}) => {
         } else {
           setOnlineStatus('Offline');
         }
+        
+        // ✅ Grab the receiver's FCM token
+        if (data.fcmToken) {
+          setFriendFcmToken(data.fcmToken);
+        }
       }
     });
     return () => unsubscribe();
@@ -102,7 +116,7 @@ const Chat_display_screen = ({navigation, route}) => {
   useEffect(() => {
     if (!chatId) return;
     const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('createdAt', 'asc'));
+    const q = query(messagesRef, orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, querySnapshot => {
       const allMessages = querySnapshot.docs
         .map(docSnap => {
@@ -138,6 +152,7 @@ const Chat_display_screen = ({navigation, route}) => {
       receiverId: friendId,
       receiverName: friendName,
       receiverPic: initialProfilePic || '',
+      fcmToken: friendFcmToken, // ✅ Attach token for push notifications
     };
 
     // Set active call locally — this opens the Modal in App.jsx
@@ -162,7 +177,7 @@ const Chat_display_screen = ({navigation, route}) => {
     const msg = messageText;
     setMessageText('');
     try {
-      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+      const msgRef = await addDoc(collection(db, 'chats', chatId, 'messages'), {
         text: msg,
         senderId: user.uid,
         receiverId: friendId,
@@ -180,6 +195,21 @@ const Chat_display_screen = ({navigation, route}) => {
         },
         {merge: true},
       );
+
+      // ✅ Send push notification request to server with specific user token
+      const socket = getSocket();
+      if (socket && friendFcmToken) {
+        socket.emit('sendNotification', {
+          receiverId: friendId,
+          senderId: user.uid, // ✅ Send senderId so Receiver knows who to open when tapped
+          token: friendFcmToken, // Send token directly so backend doesn't need Firestore
+          title: user.displayName || 'New Message',
+          body: msg,
+          chatId: chatId,
+          msgId: msgRef.id,
+        });
+      }
+
     } catch (error) {
       console.error(error);
     }
@@ -372,15 +402,13 @@ const Chat_display_screen = ({navigation, route}) => {
         </View>
       </View>
 
-      <ScrollView
-        style={styles.chat_area}
-        ref={scrollViewRef}
-        onContentSizeChange={() =>
-          !isSelectionMode &&
-          scrollViewRef.current?.scrollToEnd({animated: true})
-        }>
-        {messages.length === 0 ? (
-          <View style={{flex: 1, alignItems: 'center', marginTop: 100}}>
+      <FlatList
+        data={messages}
+        keyExtractor={item => item.id}
+        inverted
+        contentContainerStyle={{ padding: 16 }}
+        ListEmptyComponent={
+          <View style={{flex: 1, alignItems: 'center', marginTop: 100, transform: [{ scaleY: -1 }]}}>
             <LottieView
               source={require('../assets/animations/no_contact_found.json')}
               autoPlay
@@ -397,59 +425,55 @@ const Chat_display_screen = ({navigation, route}) => {
               No messages yet. Say Hi!
             </Text>
           </View>
-        ) : (
-          <View style={styles.message_container}>
-            {messages.map(item => {
-              const isSelected = selectedMessages.includes(item.id);
-              const isMe = item.senderId === user.uid;
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  onLongPress={() => handleLongPress(item.id)}
-                  onPress={() =>
-                    isSelectionMode ? toggleSelection(item.id) : null
-                  }
-                  activeOpacity={0.9}
-                  style={[
-                    isMe ? styles.sent_message : styles.received_message,
-                    isSelected && {backgroundColor: 'rgba(62, 127, 224, 0.5)'},
-                    item.isDeleted && {backgroundColor: '#444', opacity: 0.6},
-                  ]}>
-                  <Text
-                    style={[
-                      isMe
-                        ? styles.sent_message_text
-                        : styles.received_message_text,
-                      item.isDeleted && {fontStyle: 'italic', color: '#ccc'},
-                    ]}>
-                    {item.isDeleted ? (
-                      <>
-                        <Icon name="ban-outline" size={14} /> This message was
-                        deleted
-                      </>
-                    ) : (
-                      item.text
-                    )}
-                  </Text>
-                  {isMe && !item.isDeleted && (
-                    <View style={{alignSelf: 'flex-end', marginTop: 2}}>
-                      <Icon
-                        name={
-                          item.status === 'read'
-                            ? 'checkmark-done'
-                            : 'checkmark'
-                        }
-                        size={16}
-                        color={item.status === 'read' ? '#3E7FE0' : '#A1A1A1'}
-                      />
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
-      </ScrollView>
+        }
+        renderItem={({ item }) => {
+          const isSelected = selectedMessages.includes(item.id);
+          const isMe = item.senderId === user.uid;
+          return (
+            <TouchableOpacity
+              onLongPress={() => handleLongPress(item.id)}
+              onPress={() =>
+                isSelectionMode ? toggleSelection(item.id) : null
+              }
+              activeOpacity={0.9}
+              style={[
+                isMe ? styles.sent_message : styles.received_message,
+                isSelected && {backgroundColor: 'rgba(62, 127, 224, 0.5)'},
+                item.isDeleted && {backgroundColor: '#444', opacity: 0.6},
+              ]}>
+              <Text
+                style={[
+                  isMe
+                    ? styles.sent_message_text
+                    : styles.received_message_text,
+                  item.isDeleted && {fontStyle: 'italic', color: '#ccc'},
+                ]}>
+                {item.isDeleted ? (
+                  <>
+                    <Icon name="ban-outline" size={14} /> This message was
+                    deleted
+                  </>
+                ) : (
+                  item.text
+                )}
+              </Text>
+              {isMe && !item.isDeleted && (
+                <View style={{alignSelf: 'flex-end', marginTop: 2}}>
+                  <Icon
+                    name={
+                      item.status === 'read' || item.status === 'delivered'
+                        ? 'checkmark-done'
+                        : 'checkmark'
+                    }
+                    size={16}
+                    color={item.status === 'read' ? '#3E7FE0' : '#A1A1A1'}
+                  />
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        }}
+      />
 
       {!isSelectionMode && (
         <View style={styles.input_wrapper}>

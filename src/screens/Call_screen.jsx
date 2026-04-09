@@ -9,6 +9,7 @@ import {
   StatusBar,
   BackHandler,
   Alert,
+  SafeAreaView,
 } from 'react-native';
 import React, {useEffect, useState, useRef, useContext} from 'react';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -58,7 +59,41 @@ const Call_screen = ({navigation}) => {
       async querySnapshot => {
         if (!isMounted.current) return;
 
-        const promises = querySnapshot.docs.map(async documentSnapshot => {
+        // 🚀 OPTIMIZATION: Extract unique friend IDs first
+        const uniqueFriendIds = [...new Set(querySnapshot.docs.map(doc => doc.data().friendId))];
+        const profileCache = {};
+
+        // Fetch details concurrently ONLY for unique friends
+        await Promise.all(
+          uniqueFriendIds.map(async friendId => {
+            let displayName = 'Unknown';
+            let displayPic = '';
+            try {
+              const contactRef = doc(db, 'users', user.uid, 'contacts', friendId);
+              const contactSnap = await getDoc(contactRef);
+
+              if (contactSnap.exists()) {
+                const cData = contactSnap.data();
+                displayName = cData.aliasName || cData.originalName || 'User';
+                displayPic = cData.profilePic || '';
+              } else {
+                const userRef = doc(db, 'users', friendId);
+                const userSnap = await getDoc(userRef);
+                if (userSnap.exists()) {
+                  const uData = userSnap.data();
+                  displayName = uData.name || 'User';
+                  displayPic = uData.profilePic || '';
+                }
+              }
+            } catch (e) {
+              console.log('Error fetching name:', e);
+            }
+            profileCache[friendId] = { name: displayName, pic: displayPic };
+          })
+        );
+
+        // Map synchronously using instantaneous cache
+        const resolvedCalls = querySnapshot.docs.map(documentSnapshot => {
           const callData = documentSnapshot.data();
 
           let readableTime = '';
@@ -70,46 +105,16 @@ const Call_screen = ({navigation}) => {
             });
           }
 
-          let displayName = 'Unknown';
-          let displayPic = ''; // ✅ FIX: fetch pic
-          try {
-            const contactRef = doc(
-              db,
-              'users',
-              user.uid,
-              'contacts',
-              callData.friendId,
-            );
-            const contactSnap = await getDoc(contactRef);
-
-            if (contactSnap.exists()) {
-              displayName =
-                contactSnap.data().aliasName ||
-                contactSnap.data().originalName ||
-                'User';
-              displayPic = contactSnap.data().profilePic || '';
-            } else {
-              const userRef = doc(db, 'users', callData.friendId);
-              const userSnap = await getDoc(userRef);
-              if (userSnap.exists()) {
-                displayName = userSnap.data().name || 'User';
-                displayPic = userSnap.data().profilePic || ''; // ✅ fetch from users collection
-              }
-            }
-          } catch (e) {
-            console.log('Error fetching name:', e);
-          }
+          const cached = profileCache[callData.friendId];
 
           return {
             ...callData,
             id: documentSnapshot.id,
-            name: displayName,
-            pic: displayPic, // ✅ store pic
+            name: cached?.name || 'Unknown',
+            pic: cached?.pic || '',
             time: readableTime,
           };
         });
-
-        const resolvedCalls = await Promise.all(promises);
         if (isMounted.current) {
           setData(resolvedCalls);
           setLoading(false);
@@ -207,7 +212,7 @@ const Call_screen = ({navigation}) => {
   if (loading) return null;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.topRow}>
         {selectionMode ? (
           <>
@@ -345,7 +350,7 @@ const Call_screen = ({navigation}) => {
         />
       )}
       <View style={styles.spacing}></View>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -356,7 +361,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 15,
-    marginTop: StatusBar.currentHeight,
+    marginTop: 15, // Fixed padding below SafeArea
     zIndex: 5,
   },
   circle: {
